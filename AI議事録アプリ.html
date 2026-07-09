@@ -1,0 +1,679 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI議事録 - 録音して、次のアクションへ</title>
+<style>
+  :root {
+    --bg: #f4f6fa;
+    --card: #ffffff;
+    --ink: #1a2233;
+    --sub: #66708a;
+    --accent: #2563eb;
+    --accent-dark: #1d4ed8;
+    --rec: #dc2626;
+    --ok: #16a34a;
+    --warn: #d97706;
+    --line: #e3e8f2;
+    --radius: 14px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: "Hiragino Kaku Gothic ProN", "Yu Gothic UI", "Meiryo", sans-serif;
+    background: var(--bg); color: var(--ink); line-height: 1.65;
+    padding-bottom: 60px;
+  }
+  header {
+    background: linear-gradient(135deg, #1e3a8a, #2563eb);
+    color: #fff; padding: 18px 20px;
+    display: flex; justify-content: space-between; align-items: center;
+    position: sticky; top: 0; z-index: 10;
+  }
+  header h1 { font-size: 1.15rem; letter-spacing: .05em; }
+  header h1 small { font-weight: normal; font-size: .72rem; opacity: .85; display: block; }
+  .gear {
+    background: rgba(255,255,255,.15); border: 1px solid rgba(255,255,255,.3);
+    color: #fff; border-radius: 8px; padding: 6px 14px; cursor: pointer; font-size: .85rem;
+  }
+  main { max-width: 860px; margin: 0 auto; padding: 16px; }
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 18px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(30,58,138,.06);
+  }
+  .card h2 { font-size: .95rem; color: var(--accent-dark); margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
+  label { font-size: .78rem; color: var(--sub); display: block; margin-bottom: 3px; }
+  input[type=text], input[type=date], input[type=password], textarea {
+    width: 100%; padding: 9px 12px; border: 1px solid var(--line); border-radius: 8px;
+    font-size: .95rem; font-family: inherit; background: #fbfcfe;
+  }
+  input:focus, textarea:focus { outline: 2px solid #bfdbfe; border-color: var(--accent); }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  @media (max-width: 560px) { .grid2 { grid-template-columns: 1fr; } }
+  .row { margin-bottom: 12px; }
+
+  /* 録音 */
+  .rec-area { text-align: center; padding: 8px 0; }
+  #recBtn {
+    width: 108px; height: 108px; border-radius: 50%; border: none; cursor: pointer;
+    background: var(--accent); color: #fff; font-size: 1rem; font-weight: bold;
+    box-shadow: 0 4px 14px rgba(37,99,235,.4); transition: all .2s;
+  }
+  #recBtn.recording {
+    background: var(--rec); box-shadow: 0 0 0 0 rgba(220,38,38,.5);
+    animation: pulse 1.6s infinite;
+  }
+  @keyframes pulse {
+    0% { box-shadow: 0 0 0 0 rgba(220,38,38,.45); }
+    70% { box-shadow: 0 0 0 22px rgba(220,38,38,0); }
+    100% { box-shadow: 0 0 0 0 rgba(220,38,38,0); }
+  }
+  #timer { font-size: 1.5rem; font-variant-numeric: tabular-nums; margin-top: 10px; color: var(--ink); }
+  #recHint { font-size: .78rem; color: var(--sub); margin-top: 4px; }
+  #interim { color: var(--sub); font-style: italic; min-height: 1.4em; font-size: .88rem; margin-top: 8px; }
+
+  #transcript { min-height: 180px; resize: vertical; line-height: 1.8; }
+  .toolbar { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+  button.btn {
+    padding: 10px 18px; border: none; border-radius: 9px; cursor: pointer;
+    font-size: .9rem; font-family: inherit; font-weight: 600;
+  }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-primary:hover { background: var(--accent-dark); }
+  .btn-primary:disabled { background: #9db4e8; cursor: not-allowed; }
+  .btn-ghost { background: #eef2fb; color: var(--accent-dark); }
+  .btn-big { width: 100%; padding: 14px; font-size: 1.05rem; }
+
+  /* 結果 */
+  .section {
+    background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
+    margin-bottom: 12px; overflow: hidden;
+  }
+  .section-head {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 12px 16px; background: #f8faff; border-bottom: 1px solid var(--line);
+  }
+  .section-head h3 { font-size: .92rem; color: var(--ink); }
+  .section-head .num {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 22px; height: 22px; border-radius: 6px; background: var(--accent);
+    color: #fff; font-size: .75rem; margin-right: 8px;
+  }
+  .copy-btn {
+    background: none; border: 1px solid var(--line); border-radius: 6px;
+    padding: 4px 12px; font-size: .75rem; cursor: pointer; color: var(--sub);
+  }
+  .copy-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .section-body { padding: 14px 18px; font-size: .93rem; }
+  .section-body ul { padding-left: 1.3em; }
+  .section-body li { margin-bottom: 5px; }
+  .empty { color: var(--sub); font-size: .85rem; }
+  table.todo { width: 100%; border-collapse: collapse; font-size: .88rem; }
+  table.todo th, table.todo td { border: 1px solid var(--line); padding: 7px 10px; text-align: left; }
+  table.todo th { background: #f8faff; font-size: .78rem; color: var(--sub); }
+  .pri { display: inline-block; padding: 1px 10px; border-radius: 20px; font-size: .75rem; color: #fff; }
+  .pri-high { background: var(--rec); } .pri-mid { background: var(--warn); } .pri-low { background: var(--ok); }
+  .followup-box { white-space: pre-wrap; background: #f8faff; border-radius: 8px; padding: 14px; }
+
+  #status { text-align: center; padding: 12px; font-size: .9rem; color: var(--sub); display: none; }
+  .spinner {
+    display: inline-block; width: 16px; height: 16px; border: 2px solid #cbd5f0;
+    border-top-color: var(--accent); border-radius: 50%; vertical-align: -3px; margin-right: 8px;
+    animation: spin .8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .error-msg { background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; border-radius: 8px; padding: 10px 14px; font-size: .87rem; margin-top: 10px; display: none; }
+
+  /* 設定モーダル */
+  .modal-bg {
+    position: fixed; inset: 0; background: rgba(15,23,42,.5); z-index: 100;
+    display: none; align-items: center; justify-content: center; padding: 20px;
+  }
+  .modal { background: #fff; border-radius: var(--radius); max-width: 440px; width: 100%; padding: 22px; }
+  .modal h2 { font-size: 1rem; margin-bottom: 12px; }
+  .modal p { font-size: .8rem; color: var(--sub); margin-bottom: 12px; }
+  .toast {
+    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+    background: #1a2233; color: #fff; padding: 10px 22px; border-radius: 30px;
+    font-size: .85rem; opacity: 0; transition: opacity .3s; pointer-events: none; z-index: 200;
+  }
+  .toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🎙 AI議事録<small>録音するだけで、次のアクションが決まる</small></h1>
+  <button class="gear" onclick="openSettings()">⚙ 設定</button>
+</header>
+
+<main>
+  <!-- 前回までの宿題(未完了ToDo) -->
+  <div class="card" id="pendingCard" style="display:none; border-left:4px solid var(--warn);">
+    <h2>📌 前回までの宿題(未完了ToDo)</h2>
+    <p style="font-size:.78rem;color:var(--sub);margin-bottom:8px;">会議の最初にこれを読み上げて進捗確認すると、決めたことが守られる会議になります。完了したらチェック。</p>
+    <div id="pendingList"></div>
+    <div id="jikaiCarry" style="margin-top:10px;"></div>
+  </div>
+
+  <!-- 会議情報 -->
+  <div class="card">
+    <h2>📋 会議情報</h2>
+    <div class="grid2 row">
+      <div>
+        <label>会議名</label>
+        <input type="text" id="mTitle" placeholder="例:7月度 店長会議">
+      </div>
+      <div>
+        <label>日付</label>
+        <input type="date" id="mDate">
+      </div>
+    </div>
+    <div class="grid2">
+      <div>
+        <label>店舗・チーム名</label>
+        <input type="text" id="mStore" placeholder="例:〇〇店">
+      </div>
+      <div>
+        <label>参加者(カンマ区切り)</label>
+        <input type="text" id="mMembers" placeholder="例:田中、佐藤、鈴木">
+      </div>
+    </div>
+  </div>
+
+  <!-- 録音 -->
+  <div class="card rec-area">
+    <button id="recBtn" onclick="toggleRec()">● 録音<br>開始</button>
+    <div id="timer">00:00</div>
+    <div id="recHint">ボタンを押して会議の録音を開始(Chrome / Edge 推奨)</div>
+    <div id="interim"></div>
+  </div>
+
+  <!-- 文字起こし -->
+  <div class="card">
+    <h2>📝 文字起こし <span style="font-weight:normal;font-size:.75rem;color:var(--sub)">(手で修正・追記OK / 既存メモの貼り付けもOK)</span></h2>
+    <textarea id="transcript" placeholder="録音すると、ここに文字起こしがリアルタイムで入ります。&#10;すでにメモや文字起こしがある場合は、ここに貼り付けてもOKです。"></textarea>
+    <div class="toolbar">
+      <button class="btn btn-ghost" onclick="clearAll()">🗑 クリア</button>
+      <button class="btn btn-ghost" onclick="copyText(document.getElementById('transcript').value,'文字起こしをコピーしました')">📋 文字起こしをコピー</button>
+    </div>
+  </div>
+
+  <button class="btn btn-primary btn-big" id="aiBtn" onclick="analyze()">✨ AIで議事録に整理する</button>
+  <div id="status"></div>
+  <div class="error-msg" id="errBox"></div>
+
+  <!-- 結果 -->
+  <div id="results" style="display:none; margin-top:18px;">
+    <div class="toolbar" style="margin-bottom:14px;">
+      <button class="btn btn-primary" onclick="copyAllMd()">📄 議事録全体をコピー(そのまま共有用)</button>
+    </div>
+    <div id="sectionsWrap"></div>
+  </div>
+
+  <!-- 過去の議事録 -->
+  <div class="card" style="margin-top:18px;">
+    <h2>🗂 過去の議事録</h2>
+    <div id="historyList" class="empty">まだ保存された議事録はありません。AI整理すると自動で保存されます。</div>
+  </div>
+</main>
+
+<!-- 設定モーダル -->
+<div class="modal-bg" id="modalBg" onclick="if(event.target===this)closeSettings()">
+  <div class="modal">
+    <h2>⚙ 設定</h2>
+    <p>管理者から教わった「送信URL」と「共有コード」の2つを入力してください。これだけで使えます。</p>
+    <div class="row">
+      <label>送信URL(https://script.google.com/... で始まる)</label>
+      <input type="text" id="gasUrlInput" placeholder="https://script.google.com/macros/s/.../exec">
+    </div>
+    <div class="row">
+      <label>共有コード</label>
+      <input type="text" id="gasTokenInput" placeholder="例:jimu2026">
+    </div>
+    <p style="margin-top:14px;">▼ 管理者向け(任意):APIキーを直接入れると、Google経由でなくこの端末から直接AI処理します。従業員は空欄のままでOK。</p>
+    <div class="row">
+      <label>Claude APIキー(通常は空欄でよい)</label>
+      <input type="password" id="apiKeyInput" placeholder="sk-ant-api03-...">
+    </div>
+    <div class="toolbar">
+      <button class="btn btn-primary" onclick="saveSettings()">保存</button>
+      <button class="btn btn-ghost" onclick="closeSettings()">閉じる</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* ========== 状態 ========== */
+let recognition = null;
+let recording = false;
+let startTime = null;
+let timerInt = null;
+let lastResult = null;
+
+document.getElementById('mDate').value = new Date().toISOString().slice(0,10);
+
+/* 自動保存(誤って閉じても復元) */
+const saved = localStorage.getItem('giji_transcript');
+if (saved) document.getElementById('transcript').value = saved;
+const savedTitle = localStorage.getItem('giji_title');
+if (savedTitle) document.getElementById('mTitle').value = savedTitle;
+const savedMembers = localStorage.getItem('giji_members');
+if (savedMembers) document.getElementById('mMembers').value = savedMembers;
+const savedStore = localStorage.getItem('giji_store');
+if (savedStore) document.getElementById('mStore').value = savedStore;
+setInterval(() => {
+  localStorage.setItem('giji_transcript', document.getElementById('transcript').value);
+  localStorage.setItem('giji_title', document.getElementById('mTitle').value);
+  localStorage.setItem('giji_members', document.getElementById('mMembers').value);
+  localStorage.setItem('giji_store', document.getElementById('mStore').value);
+}, 3000);
+
+/* ========== 録音(音声認識) ========== */
+function initRecognition() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) return null;
+  const r = new SR();
+  r.lang = 'ja-JP';
+  r.continuous = true;
+  r.interimResults = true;
+  r.onresult = (e) => {
+    let interim = '';
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const t = e.results[i][0].transcript;
+      if (e.results[i].isFinal) appendTranscript(t);
+      else interim += t;
+    }
+    document.getElementById('interim').textContent = interim;
+  };
+  r.onerror = (e) => {
+    if (e.error === 'not-allowed') {
+      showError('マイクの使用が許可されていません。ブラウザのマイク許可を確認してください。');
+      stopRec();
+    }
+    /* no-speech 等は自動再開に任せる */
+  };
+  r.onend = () => { if (recording) { try { r.start(); } catch(_){} } };
+  return r;
+}
+
+function appendTranscript(text) {
+  text = text.trim();
+  if (!text) return;
+  const ta = document.getElementById('transcript');
+  const time = elapsedStr();
+  ta.value += (ta.value ? '\n' : '') + '[' + time + '] ' + text;
+  ta.scrollTop = ta.scrollHeight;
+}
+
+function toggleRec() { recording ? stopRec() : startRec(); }
+
+function startRec() {
+  recognition = initRecognition();
+  if (!recognition) {
+    showError('このブラウザは音声認識に対応していません。Chrome または Edge をお使いください。文字起こしを直接貼り付けて使うこともできます。');
+    return;
+  }
+  hideError();
+  try { recognition.start(); } catch(_) {}
+  recording = true;
+  startTime = Date.now();
+  timerInt = setInterval(() => { document.getElementById('timer').textContent = elapsedStr(); }, 500);
+  const btn = document.getElementById('recBtn');
+  btn.classList.add('recording');
+  btn.innerHTML = '■ 録音<br>停止';
+  document.getElementById('recHint').textContent = '録音中…(話した内容が下に文字で入ります)';
+}
+
+function stopRec() {
+  recording = false;
+  if (recognition) { try { recognition.stop(); } catch(_){} }
+  clearInterval(timerInt);
+  const btn = document.getElementById('recBtn');
+  btn.classList.remove('recording');
+  btn.innerHTML = '● 録音<br>開始';
+  document.getElementById('recHint').textContent = '録音を停止しました。「AIで議事録に整理する」を押してください。';
+  document.getElementById('interim').textContent = '';
+}
+
+function elapsedStr() {
+  if (!startTime) return '00:00';
+  const s = Math.floor((Date.now() - startTime) / 1000);
+  const m = String(Math.floor(s/60)).padStart(2,'0');
+  return m + ':' + String(s%60).padStart(2,'0');
+}
+
+function clearAll() {
+  if (!confirm('文字起こしと結果をクリアしますか?')) return;
+  document.getElementById('transcript').value = '';
+  document.getElementById('results').style.display = 'none';
+  document.getElementById('sectionsWrap').innerHTML = '';
+  localStorage.removeItem('giji_transcript');
+  startTime = null;
+  document.getElementById('timer').textContent = '00:00';
+}
+
+/* ========== 設定 ========== */
+function openSettings() {
+  document.getElementById('apiKeyInput').value = localStorage.getItem('giji_apikey') || '';
+  document.getElementById('gasUrlInput').value = localStorage.getItem('giji_gasurl') || '';
+  document.getElementById('gasTokenInput').value = localStorage.getItem('giji_gastoken') || '';
+  document.getElementById('modalBg').style.display = 'flex';
+}
+function closeSettings() { document.getElementById('modalBg').style.display = 'none'; }
+function saveSettings() {
+  localStorage.setItem('giji_apikey', document.getElementById('apiKeyInput').value.trim());
+  localStorage.setItem('giji_gasurl', document.getElementById('gasUrlInput').value.trim());
+  localStorage.setItem('giji_gastoken', document.getElementById('gasTokenInput').value.trim());
+  closeSettings();
+  toast('設定を保存しました');
+}
+
+/* ========== 管理シートへの送信 ========== */
+async function postGas(payload) {
+  const url = localStorage.getItem('giji_gasurl');
+  if (!url) return null; /* 未設定なら単体利用 */
+  payload.token = localStorage.getItem('giji_gastoken') || '';
+  try {
+    const res = await fetch(url, { method: 'POST', headers: {'Content-Type': 'text/plain'}, body: JSON.stringify(payload) });
+    const d = await res.json();
+    return d && d.ok === true;
+  } catch (_) { return false; }
+}
+
+/* ========== AI整理 ========== */
+async function analyze() {
+  const text = document.getElementById('transcript').value.trim();
+  if (!text) { showError('文字起こしが空です。録音するか、メモを貼り付けてください。'); return; }
+  const apiKey = localStorage.getItem('giji_apikey');
+  const gasUrl = localStorage.getItem('giji_gasurl');
+  if (!apiKey && !gasUrl) { showError('先に右上の「⚙ 設定」から、管理者に教わった「送信URL」と「共有コード」を登録してください。'); openSettings(); return; }
+  if (recording) stopRec();
+  hideError();
+
+  const btn = document.getElementById('aiBtn');
+  btn.disabled = true;
+  const st = document.getElementById('status');
+  st.style.display = 'block';
+  st.innerHTML = '<span class="spinner"></span>AIが会議内容を整理しています…(30秒ほどかかります)';
+
+  const title = document.getElementById('mTitle').value || '(会議名未設定)';
+  const date = document.getElementById('mDate').value || '';
+  const members = document.getElementById('mMembers').value || '(不明)';
+  const store = document.getElementById('mStore').value || '';
+
+  const prompt = `あなたは優秀な会議書記兼、経営参謀です。以下の会議の文字起こしを分析し、指定のJSON形式のみで出力してください(前後の説明文・コードブロック記号は不要)。
+
+# 会議情報
+会議名: ${title}
+日付: ${date}
+店舗・チーム: ${store}
+参加者: ${members}
+
+# 文字起こし
+${text}
+
+# 出力形式(JSON)
+{
+ "kettei": ["決定事項を1件ずつ"],
+ "miketei": ["未決事項(議論されたが結論が出なかったこと)を1件ずつ"],
+ "kanshin": [{"name":"参加者名","point":"その人の関心・懸念の要約"}],
+ "suuji": ["会議中に出た重要な数字・金額・日付・固有名詞を、文脈がわかる形で1件ずつ"],
+ "todo": [{"task":"やること","tanto":"担当者(明言なければ推定し(推定)と付記、不明なら未定)","kigen":"期限(不明なら未定)","yusen":"高/中/低"}],
+ "jikai": ["次回会議で決めるべきことを1件ずつ"],
+ "risk": ["会議では明言されなかったが確認すべきリスク・見落としの可能性を1件ずつ"],
+ "followup": "参加者に今すぐ送るフォローアップ文面。決定事項とToDoを簡潔に共有し、前向きで士気が上がるトーンで。そのままLINEやメールに貼れる完成文にする。"
+}
+
+該当が無い項目は空配列にしてください。文字起こしに無い情報を創作しないでください(riskの指摘は例外として、書かれていない盲点を指摘してよい)。`;
+
+  try {
+    let raw;
+    if (apiKey) {
+      /* 方式A:このアプリから直接AIを呼ぶ(APIキーを入れた端末のみ) */
+      const res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-access': 'true'
+        },
+        body: JSON.stringify({
+          model: 'claude-sonnet-5',
+          max_tokens: 8000,
+          messages: [{ role: 'user', content: prompt }]
+        })
+      });
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => ({}));
+        const msg = errBody?.error?.message || res.statusText;
+        if (res.status === 401) throw new Error('APIキーが正しくありません。「⚙ 設定」で確認してください。');
+        throw new Error('AI処理エラー (' + res.status + '): ' + msg);
+      }
+      const data = await res.json();
+      raw = data.content[0].text.trim();
+    } else {
+      /* 方式B:会社のGoogle経由でAI処理(APIキー不要・通常はこちら) */
+      const res = await fetch(gasUrl, {
+        method: 'POST', headers: {'Content-Type': 'text/plain'},
+        body: JSON.stringify({ action: 'analyze', prompt, token: localStorage.getItem('giji_gastoken') || '' })
+      });
+      const d = await res.json();
+      if (d.error === 'unauthorized') throw new Error('共有コードが違います。「⚙ 設定」で確認してください。');
+      if (d.error) throw new Error(d.error);
+      raw = d.text.trim();
+    }
+    raw = raw.replace(/^```json\s*/i, '').replace(/^```\s*/, '').replace(/```\s*$/, '');
+    lastResult = JSON.parse(raw);
+    saveHistory(lastResult, title, date, members, store);
+    renderResults(lastResult);
+    document.getElementById('results').style.display = 'block';
+    document.getElementById('results').scrollIntoView({ behavior: 'smooth' });
+  } catch (err) {
+    showError(err.message.includes('JSON') ? 'AIの回答の解析に失敗しました。もう一度お試しください。' : err.message);
+  } finally {
+    btn.disabled = false;
+    st.style.display = 'none';
+  }
+}
+
+/* ========== 結果表示 ========== */
+const SECTIONS = [
+  { key: 'kettei',  title: '決定事項', icon: '✅' },
+  { key: 'miketei', title: '未決事項', icon: '⏸' },
+  { key: 'kanshin', title: '各参加者の関心・懸念', icon: '👥' },
+  { key: 'suuji',   title: '重要な数字・固有名詞', icon: '🔢' },
+  { key: 'todo',    title: 'ToDoリスト', icon: '📌' },
+  { key: 'jikai',   title: '次回会議で決めるべきこと', icon: '📅' },
+  { key: 'risk',    title: '確認すべきリスク(会議で明言されなかった点)', icon: '⚠️' },
+  { key: 'followup',title: '今すぐ送るフォローアップ文面', icon: '✉️' }
+];
+
+function esc(s) { const d = document.createElement('div'); d.textContent = s ?? ''; return d.innerHTML; }
+
+function renderResults(r) {
+  const wrap = document.getElementById('sectionsWrap');
+  wrap.innerHTML = '';
+  SECTIONS.forEach((sec, i) => {
+    let bodyHtml = '';
+    const v = r[sec.key];
+    if (sec.key === 'todo') {
+      if (v && v.length) {
+        bodyHtml = '<table class="todo"><tr><th>やること</th><th>担当</th><th>期限</th><th>優先度</th></tr>' +
+          v.map(t => {
+            const cls = t.yusen === '高' ? 'pri-high' : t.yusen === '低' ? 'pri-low' : 'pri-mid';
+            return `<tr><td>${esc(t.task)}</td><td>${esc(t.tanto)}</td><td>${esc(t.kigen)}</td><td><span class="pri ${cls}">${esc(t.yusen)}</span></td></tr>`;
+          }).join('') + '</table>';
+      } else bodyHtml = '<div class="empty">該当なし</div>';
+    } else if (sec.key === 'kanshin') {
+      bodyHtml = (v && v.length)
+        ? '<ul>' + v.map(k => `<li><b>${esc(k.name)}</b>:${esc(k.point)}</li>`).join('') + '</ul>'
+        : '<div class="empty">該当なし</div>';
+    } else if (sec.key === 'followup') {
+      bodyHtml = v ? `<div class="followup-box">${esc(v)}</div>` : '<div class="empty">該当なし</div>';
+    } else {
+      bodyHtml = (v && v.length)
+        ? '<ul>' + v.map(x => `<li>${esc(x)}</li>`).join('') + '</ul>'
+        : '<div class="empty">該当なし</div>';
+    }
+    wrap.insertAdjacentHTML('beforeend', `
+      <div class="section">
+        <div class="section-head">
+          <h3><span class="num">${i+1}</span>${sec.icon} ${sec.title}</h3>
+          <button class="copy-btn" onclick="copySection('${sec.key}')">コピー</button>
+        </div>
+        <div class="section-body">${bodyHtml}</div>
+      </div>`);
+  });
+}
+
+/* ========== コピー ========== */
+function sectionToText(key) {
+  const v = lastResult[key];
+  if (key === 'todo') return (v||[]).map(t => `・${t.task}(担当:${t.tanto} / 期限:${t.kigen} / 優先度:${t.yusen})`).join('\n');
+  if (key === 'kanshin') return (v||[]).map(k => `・${k.name}:${k.point}`).join('\n');
+  if (key === 'followup') return v || '';
+  return (v||[]).map(x => '・' + x).join('\n');
+}
+function copySection(key) {
+  const sec = SECTIONS.find(s => s.key === key);
+  copyText(sectionToText(key), '「' + sec.title + '」をコピーしました');
+}
+function copyAllMd() {
+  const title = document.getElementById('mTitle').value || '(会議名未設定)';
+  const date = document.getElementById('mDate').value;
+  const members = document.getElementById('mMembers').value;
+  let md = `# 議事録:${title}\n日付:${date}\n参加者:${members}\n`;
+  SECTIONS.forEach((sec, i) => {
+    md += `\n## ${i+1}. ${sec.title}\n${sectionToText(sec.key) || '該当なし'}\n`;
+  });
+  copyText(md, '議事録全体をコピーしました');
+}
+function copyText(text, msg) {
+  if (!text) { toast('コピーする内容がありません'); return; }
+  navigator.clipboard.writeText(text).then(() => toast(msg)).catch(() => {
+    const ta = document.createElement('textarea');
+    ta.value = text; document.body.appendChild(ta); ta.select();
+    document.execCommand('copy'); ta.remove(); toast(msg);
+  });
+}
+
+/* ========== 履歴と宿題(仕組化の核) ========== */
+function getHistory() { return JSON.parse(localStorage.getItem('giji_history') || '[]'); }
+function setHistory(h) { localStorage.setItem('giji_history', JSON.stringify(h)); }
+
+function saveHistory(result, title, date, members, store) {
+  const h = getHistory();
+  /* ToDoに完了フラグを付ける */
+  (result.todo || []).forEach(t => { if (t.done === undefined) t.done = false; });
+  const meeting = { id: Date.now(), title, date, members, store: store || '', result };
+  h.unshift(meeting);
+  if (h.length > 50) h.pop(); /* 最大50件 */
+  setHistory(h);
+  renderHistory();
+  renderPending();
+  /* 管理シートへ自動送信(設定済みの場合のみ) */
+  postGas({ action: 'save', meeting }).then(ok => {
+    if (ok === true) toast('会議ログを管理シートに送信しました ☁');
+    else if (ok === false) toast('⚠ 管理シートへの送信に失敗しました(議事録は端末に保存済み)');
+  });
+}
+
+function renderHistory() {
+  const h = getHistory();
+  const el = document.getElementById('historyList');
+  if (!h.length) { el.className = 'empty'; el.textContent = 'まだ保存された議事録はありません。AI整理すると自動で保存されます。'; return; }
+  el.className = '';
+  el.innerHTML = h.map(m => {
+    const openTodos = (m.result.todo || []).filter(t => !t.done).length;
+    return `<div style="display:flex;justify-content:space-between;align-items:center;padding:9px 4px;border-bottom:1px solid var(--line);gap:8px;">
+      <div style="min-width:0;">
+        <b style="font-size:.9rem;">${esc(m.title)}</b>
+        <span style="font-size:.78rem;color:var(--sub);"> ${esc(m.date)}${openTodos ? ' / 未完了ToDo ' + openTodos + '件' : ''}</span>
+      </div>
+      <div style="flex-shrink:0;">
+        <button class="copy-btn" onclick="viewHistory(${m.id})">開く</button>
+        <button class="copy-btn" onclick="deleteHistory(${m.id})" style="color:#b91c1c;">削除</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function viewHistory(id) {
+  const m = getHistory().find(x => x.id === id);
+  if (!m) return;
+  lastResult = m.result;
+  document.getElementById('mTitle').value = m.title;
+  document.getElementById('mDate').value = m.date;
+  document.getElementById('mMembers').value = m.members;
+  document.getElementById('mStore').value = m.store || '';
+  renderResults(m.result);
+  document.getElementById('results').style.display = 'block';
+  document.getElementById('results').scrollIntoView({ behavior: 'smooth' });
+}
+
+function deleteHistory(id) {
+  if (!confirm('この議事録を削除しますか?')) return;
+  setHistory(getHistory().filter(x => x.id !== id));
+  renderHistory();
+  renderPending();
+}
+
+function renderPending() {
+  const h = getHistory();
+  const card = document.getElementById('pendingCard');
+  const list = document.getElementById('pendingList');
+  const carry = document.getElementById('jikaiCarry');
+  const items = [];
+  h.forEach(m => (m.result.todo || []).forEach((t, idx) => {
+    if (!t.done) items.push({ mid: m.id, idx, t, mtitle: m.title, mdate: m.date });
+  }));
+  const lastJikai = h.length ? (h[0].result.jikai || []) : [];
+  if (!items.length && !lastJikai.length) { card.style.display = 'none'; return; }
+  card.style.display = 'block';
+  list.innerHTML = items.length ? items.map(it => {
+    const cls = it.t.yusen === '高' ? 'pri-high' : it.t.yusen === '低' ? 'pri-low' : 'pri-mid';
+    return `<label style="display:flex;align-items:flex-start;gap:9px;padding:7px 2px;border-bottom:1px dashed var(--line);cursor:pointer;font-size:.9rem;">
+      <input type="checkbox" onchange="toggleTodo(${it.mid},${it.idx},this.checked)" style="margin-top:4px;">
+      <span>${esc(it.t.task)} <span style="color:var(--sub);font-size:.78rem;">(担当:${esc(it.t.tanto)} / 期限:${esc(it.t.kigen)} / ${esc(it.mdate)}の会議)</span> <span class="pri ${cls}">${esc(it.t.yusen)}</span></span>
+    </label>`;
+  }).join('') : '<div class="empty">未完了のToDoはありません 🎉</div>';
+  carry.innerHTML = lastJikai.length
+    ? `<div style="font-size:.85rem;background:#fff8ec;border:1px solid #fde8c4;border-radius:8px;padding:10px 14px;"><b>📅 今回決めるべきこと(前回からの持ち越し):</b><ul style="padding-left:1.3em;margin-top:4px;">${lastJikai.map(x => '<li>' + esc(x) + '</li>').join('')}</ul></div>`
+    : '';
+}
+
+function toggleTodo(mid, idx, done) {
+  const h = getHistory();
+  const m = h.find(x => x.id === mid);
+  if (m && m.result.todo && m.result.todo[idx]) {
+    m.result.todo[idx].done = done;
+    m.result.todo[idx].doneAt = done ? new Date().toISOString().slice(0,10) : '';
+    setHistory(h);
+    toast(done ? 'ToDoを完了にしました 👏' : 'ToDoを未完了に戻しました');
+    setTimeout(renderPending, 400);
+    renderHistory();
+    postGas({ action: 'toggle', id: mid, idx, done }); /* 管理シートにも反映 */
+  }
+}
+
+renderHistory();
+renderPending();
+
+/* ========== UI補助 ========== */
+function toast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2200);
+}
+function showError(msg) {
+  const e = document.getElementById('errBox');
+  e.textContent = msg; e.style.display = 'block';
+}
+function hideError() { document.getElementById('errBox').style.display = 'none'; }
+</script>
+</body>
+</html>

@@ -1,0 +1,499 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI議事録 管理画面</title>
+<style>
+  :root {
+    --bg: #f4f6fa; --card: #fff; --ink: #1a2233; --sub: #66708a;
+    --accent: #2563eb; --accent-dark: #1d4ed8; --rec: #dc2626; --ok: #16a34a;
+    --warn: #d97706; --line: #e3e8f2; --radius: 14px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: "Hiragino Kaku Gothic ProN","Yu Gothic UI","Meiryo",sans-serif; background: var(--bg); color: var(--ink); line-height: 1.65; padding-bottom: 60px; }
+  header {
+    background: linear-gradient(135deg,#0f172a,#1e3a8a); color: #fff; padding: 18px 20px;
+    display: flex; justify-content: space-between; align-items: center; position: sticky; top: 0; z-index: 10;
+  }
+  header h1 { font-size: 1.15rem; }
+  header h1 small { font-weight: normal; font-size: .72rem; opacity: .85; display: block; }
+  .gear { background: rgba(255,255,255,.15); border: 1px solid rgba(255,255,255,.3); color: #fff; border-radius: 8px; padding: 6px 14px; cursor: pointer; font-size: .85rem; }
+  main { max-width: 980px; margin: 0 auto; padding: 16px; }
+  .tabs { display: flex; gap: 6px; margin-bottom: 16px; flex-wrap: wrap; }
+  .tab {
+    padding: 9px 18px; border-radius: 30px; border: 1px solid var(--line); background: #fff;
+    cursor: pointer; font-size: .88rem; font-family: inherit; font-weight: 600; color: var(--sub);
+  }
+  .tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(30,58,138,.06); }
+  .empty { color: var(--sub); font-size: .88rem; }
+  button.btn { padding: 10px 18px; border: none; border-radius: 9px; cursor: pointer; font-size: .9rem; font-family: inherit; font-weight: 600; }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-ghost { background: #eef2fb; color: var(--accent-dark); }
+  input[type=text], input[type=password], select {
+    width: 100%; padding: 9px 12px; border: 1px solid var(--line); border-radius: 8px; font-size: .95rem; font-family: inherit; background: #fbfcfe;
+  }
+  label { font-size: .78rem; color: var(--sub); display: block; margin-bottom: 3px; }
+  .row { margin-bottom: 12px; }
+  table { width: 100%; border-collapse: collapse; font-size: .88rem; }
+  th, td { border: 1px solid var(--line); padding: 8px 10px; text-align: left; vertical-align: top; }
+  th { background: #f8faff; font-size: .78rem; color: var(--sub); white-space: nowrap; }
+  tr.clickable { cursor: pointer; }
+  tr.clickable:hover td { background: #f0f5ff; }
+  .pri { display: inline-block; padding: 1px 10px; border-radius: 20px; font-size: .75rem; color: #fff; white-space: nowrap; }
+  .pri-high { background: var(--rec); } .pri-mid { background: var(--warn); } .pri-low { background: var(--ok); }
+  .badge { display: inline-block; padding: 1px 10px; border-radius: 20px; font-size: .74rem; background: #eef2fb; color: var(--accent-dark); }
+  .filterbar { display: flex; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
+  .filterbar > div { flex: 1; min-width: 150px; }
+  /* 詳細 */
+  .section { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); margin-bottom: 12px; overflow: hidden; }
+  .section-head { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; background: #f8faff; border-bottom: 1px solid var(--line); }
+  .section-head h3 { font-size: .92rem; }
+  .num { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 6px; background: var(--accent); color: #fff; font-size: .75rem; margin-right: 8px; }
+  .section-body { padding: 14px 18px; font-size: .93rem; }
+  .section-body ul { padding-left: 1.3em; }
+  .followup-box { white-space: pre-wrap; background: #f8faff; border-radius: 8px; padding: 14px; }
+  /* ダッシュボード */
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit,minmax(150px,1fr)); gap: 12px; margin-bottom: 16px; }
+  .kpi { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; text-align: center; }
+  .kpi .v { font-size: 1.7rem; font-weight: bold; color: var(--accent-dark); }
+  .kpi .l { font-size: .76rem; color: var(--sub); }
+  .bar-bg { background: #eef2fb; border-radius: 20px; height: 14px; overflow: hidden; min-width: 80px; }
+  .bar { height: 100%; border-radius: 20px; background: var(--ok); }
+  #status { text-align: center; padding: 24px; color: var(--sub); }
+  .spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid #cbd5f0; border-top-color: var(--accent); border-radius: 50%; vertical-align: -3px; margin-right: 8px; animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .error-msg { background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; border-radius: 8px; padding: 10px 14px; font-size: .87rem; margin: 10px 0; display: none; }
+  .modal-bg { position: fixed; inset: 0; background: rgba(15,23,42,.5); z-index: 100; display: none; align-items: center; justify-content: center; padding: 20px; }
+  .modal { background: #fff; border-radius: var(--radius); max-width: 460px; width: 100%; padding: 22px; }
+  .modal h2 { font-size: 1rem; margin-bottom: 12px; }
+  .modal p { font-size: .8rem; color: var(--sub); margin-bottom: 12px; }
+  .toolbar { display: flex; gap: 8px; flex-wrap: wrap; }
+  .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: #1a2233; color: #fff; padding: 10px 22px; border-radius: 30px; font-size: .85rem; opacity: 0; transition: opacity .3s; pointer-events: none; z-index: 200; }
+  .toast.show { opacity: 1; }
+  .back { margin-bottom: 12px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>📊 AI議事録 管理画面<small>全店舗の会議ログ・ToDo・会議の質を一覧</small></h1>
+  <div>
+    <button class="gear" onclick="loadData()">🔄 更新</button>
+    <button class="gear" onclick="openSettings()">⚙ 設定</button>
+  </div>
+</header>
+
+<main>
+  <div class="tabs">
+    <button class="tab active" id="tab-list" onclick="showTab('list')">🗂 会議一覧</button>
+    <button class="tab" id="tab-todo" onclick="showTab('todo')">📌 未完了ToDo</button>
+    <button class="tab" id="tab-dash" onclick="showTab('dash')">📈 ダッシュボード</button>
+    <button class="tab" id="tab-report" onclick="showTab('report')">📝 週次改善報告</button>
+  </div>
+
+  <div class="error-msg" id="errBox"></div>
+  <div id="status" style="display:none;"><span class="spinner"></span>読み込み中…</div>
+
+  <div id="view-list"></div>
+  <div id="view-todo" style="display:none;"></div>
+  <div id="view-dash" style="display:none;"></div>
+  <div id="view-report" style="display:none;"></div>
+  <div id="view-detail" style="display:none;"></div>
+</main>
+
+<div class="modal-bg" id="modalBg" onclick="if(event.target===this)closeSettings()">
+  <div class="modal">
+    <h2>⚙ 接続設定</h2>
+    <p>Apps Scriptの「送信URL」と「共有コード」を入力してください(従業員アプリと同じもの)。</p>
+    <div class="row">
+      <label>送信URL</label>
+      <input type="text" id="gasUrlInput" placeholder="https://script.google.com/macros/s/.../exec">
+    </div>
+    <div class="row">
+      <label>共有コード</label>
+      <input type="text" id="gasTokenInput" placeholder="例:jimu2026">
+    </div>
+    <div class="toolbar">
+      <button class="btn btn-primary" onclick="saveSettings()">保存して読み込む</button>
+      <button class="btn btn-ghost" onclick="closeSettings()">閉じる</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+let meetings = [];
+let currentTab = 'list';
+
+const SECTIONS = [
+  { key: 'kettei',  title: '決定事項', icon: '✅' },
+  { key: 'miketei', title: '未決事項', icon: '⏸' },
+  { key: 'kanshin', title: '各参加者の関心・懸念', icon: '👥' },
+  { key: 'suuji',   title: '重要な数字・固有名詞', icon: '🔢' },
+  { key: 'todo',    title: 'ToDoリスト', icon: '📌' },
+  { key: 'jikai',   title: '次回会議で決めるべきこと', icon: '📅' },
+  { key: 'risk',    title: '確認すべきリスク', icon: '⚠️' },
+  { key: 'followup',title: 'フォローアップ文面', icon: '✉️' }
+];
+
+function esc(s) { const d = document.createElement('div'); d.textContent = s ?? ''; return d.innerHTML; }
+function cfg() { return { url: localStorage.getItem('kanri_gasurl') || '', token: localStorage.getItem('kanri_gastoken') || '' }; }
+
+/* ========== データ読み込み ========== */
+async function loadData() {
+  const c = cfg();
+  if (!c.url) { openSettings(); return; }
+  hideError();
+  document.getElementById('status').style.display = 'block';
+  try {
+    const res = await fetch(c.url + '?token=' + encodeURIComponent(c.token));
+    const d = await res.json();
+    if (d.error) throw new Error(d.error === 'unauthorized' ? '共有コードが違います。⚙設定を確認してください。' : d.error);
+    meetings = (d.meetings || []).sort((a,b) => (b.date||'').localeCompare(a.date||'') || b.id - a.id);
+    render();
+    toast('読み込みました(' + meetings.length + '件)');
+  } catch (e) {
+    showError('読み込みに失敗しました:' + e.message + '(送信URL・共有コード・ネット接続を確認してください)');
+  } finally {
+    document.getElementById('status').style.display = 'none';
+  }
+}
+
+/* ========== タブ ========== */
+function showTab(t) {
+  currentTab = t;
+  ['list','todo','dash','report'].forEach(x => {
+    document.getElementById('tab-' + x).classList.toggle('active', x === t);
+    document.getElementById('view-' + x).style.display = x === t ? 'block' : 'none';
+  });
+  document.getElementById('view-detail').style.display = 'none';
+  render();
+}
+
+function render() {
+  if (currentTab === 'list') renderList();
+  if (currentTab === 'todo') renderTodo();
+  if (currentTab === 'dash') renderDash();
+  if (currentTab === 'report') renderReport();
+}
+
+function stores() { return [...new Set(meetings.map(m => m.store || '(店舗未設定)'))]; }
+
+/* ========== 会議一覧 ========== */
+let fStore = '', fText = '';
+function renderList() {
+  const el = document.getElementById('view-list');
+  if (!meetings.length) { el.innerHTML = '<div class="card empty">データがありません。右上の「🔄 更新」で読み込むか、⚙設定を確認してください。</div>'; return; }
+  const rows = meetings.filter(m =>
+    (!fStore || (m.store || '(店舗未設定)') === fStore) &&
+    (!fText || (m.title + m.members + m.date).includes(fText))
+  );
+  el.innerHTML = `
+    <div class="filterbar">
+      <div><label>店舗で絞り込み</label>
+        <select onchange="fStore=this.value;renderList()">
+          <option value="">すべて</option>
+          ${stores().map(s => `<option ${s===fStore?'selected':''} value="${esc(s)}">${esc(s)}</option>`).join('')}
+        </select>
+      </div>
+      <div><label>検索(会議名・参加者・日付)</label>
+        <input type="text" value="${esc(fText)}" oninput="fText=this.value;renderList()" placeholder="キーワード">
+      </div>
+    </div>
+    <div class="card" style="padding:0;overflow-x:auto;">
+      <table>
+        <tr><th>日付</th><th>店舗</th><th>会議名</th><th>参加者</th><th>決定</th><th>ToDo</th><th>リスク</th></tr>
+        ${rows.map((m,i) => {
+          const r = m.result || {};
+          const open = (r.todo||[]).filter(t=>!t.done).length;
+          const total = (r.todo||[]).length;
+          return `<tr class="clickable" onclick="showDetail(${m.id})">
+            <td style="white-space:nowrap;">${esc(m.date)}</td>
+            <td>${esc(m.store || '-')}</td>
+            <td><b>${esc(m.title)}</b></td>
+            <td style="font-size:.8rem;">${esc(m.members)}</td>
+            <td>${(r.kettei||[]).length}件</td>
+            <td>${open ? `<span class="pri pri-mid">残${open}/${total}</span>` : total ? `<span class="pri pri-low">完了</span>` : '-'}</td>
+            <td>${(r.risk||[]).length ? '⚠️' + (r.risk||[]).length : '-'}</td>
+          </tr>`;
+        }).join('')}
+      </table>
+    </div>
+    ${rows.length ? '' : '<div class="empty" style="padding:10px;">条件に合う会議がありません</div>'}`;
+}
+
+/* ========== 詳細 ========== */
+function showDetail(id) {
+  const m = meetings.find(x => String(x.id) === String(id));
+  if (!m) return;
+  ['list','todo','dash','report'].forEach(x => document.getElementById('view-' + x).style.display = 'none');
+  const el = document.getElementById('view-detail');
+  el.style.display = 'block';
+  const r = m.result || {};
+  let html = `<button class="btn btn-ghost back" onclick="showTab(currentTab)">← 一覧へ戻る</button>
+    <div class="card"><b>${esc(m.title)}</b><br>
+    <span style="font-size:.82rem;color:var(--sub);">${esc(m.date)} / ${esc(m.store || '店舗未設定')} / 参加者:${esc(m.members)}</span></div>`;
+  SECTIONS.forEach((sec, i) => {
+    const v = r[sec.key];
+    let body = '';
+    if (sec.key === 'todo') {
+      body = (v && v.length)
+        ? '<table><tr><th>やること</th><th>担当</th><th>期限</th><th>優先度</th><th>状態</th></tr>' +
+          v.map(t => `<tr><td>${esc(t.task)}</td><td>${esc(t.tanto)}</td><td>${esc(t.kigen)}</td>
+            <td><span class="pri ${t.yusen==='高'?'pri-high':t.yusen==='低'?'pri-low':'pri-mid'}">${esc(t.yusen)}</span></td>
+            <td>${t.done ? '✅ 完了' : '⬜ 未完了'}</td></tr>`).join('') + '</table>'
+        : '<div class="empty">該当なし</div>';
+    } else if (sec.key === 'kanshin') {
+      body = (v && v.length) ? '<ul>' + v.map(k => `<li><b>${esc(k.name)}</b>:${esc(k.point)}</li>`).join('') + '</ul>' : '<div class="empty">該当なし</div>';
+    } else if (sec.key === 'followup') {
+      body = v ? `<div class="followup-box">${esc(v)}</div>` : '<div class="empty">該当なし</div>';
+    } else {
+      body = (v && v.length) ? '<ul>' + v.map(x => `<li>${esc(x)}</li>`).join('') + '</ul>' : '<div class="empty">該当なし</div>';
+    }
+    html += `<div class="section">
+      <div class="section-head"><h3><span class="num">${i+1}</span>${sec.icon} ${sec.title}</h3></div>
+      <div class="section-body">${body}</div></div>`;
+  });
+  el.innerHTML = html;
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+/* ========== 未完了ToDo横断 ========== */
+function renderTodo() {
+  const el = document.getElementById('view-todo');
+  const items = [];
+  meetings.forEach(m => (m.result?.todo || []).forEach((t, idx) => {
+    if (!t.done) items.push({ m, t, idx });
+  }));
+  items.sort((a,b) => ({'高':0,'中':1,'低':2}[a.t.yusen] ?? 1) - ({'高':0,'中':1,'低':2}[b.t.yusen] ?? 1));
+  el.innerHTML = `
+    <div class="card">
+      <b>全店舗の未完了ToDo:${items.length}件</b>
+      <p style="font-size:.8rem;color:var(--sub);">チェックを入れると完了になります(従業員アプリ側の表示とは独立)。優先度順に表示。</p>
+    </div>
+    ${items.length ? `<div class="card" style="padding:0;overflow-x:auto;"><table>
+      <tr><th>完了</th><th>やること</th><th>担当</th><th>期限</th><th>優先度</th><th>店舗</th><th>会議</th></tr>
+      ${items.map(it => `<tr>
+        <td style="text-align:center;"><input type="checkbox" onchange="adminToggle('${it.m.id}',${it.idx},this)"></td>
+        <td>${esc(it.t.task)}</td><td>${esc(it.t.tanto)}</td><td>${esc(it.t.kigen)}</td>
+        <td><span class="pri ${it.t.yusen==='高'?'pri-high':it.t.yusen==='低'?'pri-low':'pri-mid'}">${esc(it.t.yusen)}</span></td>
+        <td>${esc(it.m.store || '-')}</td>
+        <td style="font-size:.8rem;"><a href="#" onclick="showDetail(${it.m.id});return false;">${esc(it.m.title)}(${esc(it.m.date)})</a></td>
+      </tr>`).join('')}
+    </table></div>` : '<div class="card empty">未完了のToDoはありません 🎉</div>'}`;
+}
+
+async function adminToggle(id, idx, box) {
+  box.disabled = true;
+  const c = cfg();
+  try {
+    const res = await fetch(c.url, { method: 'POST', headers: {'Content-Type':'text/plain'},
+      body: JSON.stringify({ action: 'toggle', id, idx, done: box.checked, token: c.token }) });
+    const d = await res.json();
+    if (!d.ok) throw new Error();
+    const m = meetings.find(x => String(x.id) === String(id));
+    if (m) {
+      m.result.todo[idx].done = box.checked;
+      m.result.todo[idx].doneAt = box.checked ? new Date().toISOString().slice(0,10) : '';
+    }
+    toast('更新しました');
+    setTimeout(renderTodo, 500);
+  } catch (_) {
+    box.checked = !box.checked; box.disabled = false;
+    toast('⚠ 更新に失敗しました');
+  }
+}
+
+/* ========== ダッシュボード ========== */
+function renderDash() {
+  const el = document.getElementById('view-dash');
+  if (!meetings.length) { el.innerHTML = '<div class="card empty">データがありません。</div>'; return; }
+  const thisMonth = new Date().toISOString().slice(0,7);
+  const mm = meetings.filter(m => (m.date||'').startsWith(thisMonth));
+  const allTodos = meetings.flatMap(m => m.result?.todo || []);
+  const doneRate = allTodos.length ? Math.round(allTodos.filter(t=>t.done).length / allTodos.length * 100) : 0;
+
+  const byStore = {};
+  meetings.forEach(m => {
+    const s = m.store || '(店舗未設定)';
+    byStore[s] = byStore[s] || { count: 0, month: 0, kettei: 0, todo: 0, done: 0, miketei: 0 };
+    const b = byStore[s];
+    b.count++;
+    if ((m.date||'').startsWith(thisMonth)) b.month++;
+    b.kettei += (m.result?.kettei || []).length;
+    b.miketei += (m.result?.miketei || []).length;
+    (m.result?.todo || []).forEach(t => { b.todo++; if (t.done) b.done++; });
+  });
+
+  el.innerHTML = `
+    <div class="kpis">
+      <div class="kpi"><div class="v">${mm.length}</div><div class="l">今月の会議数</div></div>
+      <div class="kpi"><div class="v">${meetings.reduce((a,m)=>a+(m.result?.kettei||[]).length,0)}</div><div class="l">累計 決定事項</div></div>
+      <div class="kpi"><div class="v">${allTodos.filter(t=>!t.done).length}</div><div class="l">未完了ToDo</div></div>
+      <div class="kpi"><div class="v">${doneRate}%</div><div class="l">ToDo消化率(全体)</div></div>
+    </div>
+    <div class="card" style="padding:0;overflow-x:auto;">
+      <table>
+        <tr><th>店舗</th><th>今月会議</th><th>累計会議</th><th>決定事項</th><th>未決事項</th><th>ToDo消化率</th></tr>
+        ${Object.entries(byStore).map(([s,b]) => {
+          const rate = b.todo ? Math.round(b.done/b.todo*100) : 0;
+          return `<tr>
+            <td><b>${esc(s)}</b></td><td>${b.month}</td><td>${b.count}</td>
+            <td>${b.kettei}</td><td>${b.miketei}</td>
+            <td><div style="display:flex;align-items:center;gap:8px;">
+              <div class="bar-bg" style="flex:1;"><div class="bar" style="width:${rate}%;${rate<50?'background:var(--warn);':''}"></div></div>
+              <span style="font-size:.8rem;white-space:nowrap;">${rate}%(${b.done}/${b.todo})</span>
+            </div></td>
+          </tr>`;
+        }).join('')}
+      </table>
+    </div>
+    <p style="font-size:.78rem;color:var(--sub);margin-top:8px;">💡 決定事項が少ない・未決事項ばかり・消化率が低い店舗は「会議が会議になっていない」サイン。</p>`;
+}
+
+/* ========== 週次改善報告 ========== */
+let rStore = '', rFrom = '', rTo = '';
+
+function weekDefault() {
+  const to = new Date();
+  const from = new Date(); from.setDate(to.getDate() - 6);
+  return [from.toISOString().slice(0,10), to.toISOString().slice(0,10)];
+}
+
+function renderReport() {
+  if (!rFrom) [rFrom, rTo] = weekDefault();
+  const el = document.getElementById('view-report');
+  if (!meetings.length) { el.innerHTML = '<div class="card empty">データがありません。</div>'; return; }
+  if (!rStore) rStore = stores()[0] || '';
+
+  const d = reportData();
+  el.innerHTML = `
+    <div class="card">
+      <div class="filterbar">
+        <div><label>店舗</label>
+          <select onchange="rStore=this.value;renderReport()">
+            ${stores().map(s => `<option ${s===rStore?'selected':''} value="${esc(s)}">${esc(s)}</option>`).join('')}
+          </select>
+        </div>
+        <div><label>開始日</label><input type="date" value="${rFrom}" onchange="rFrom=this.value;renderReport()"></div>
+        <div><label>終了日</label><input type="date" value="${rTo}" onchange="rTo=this.value;renderReport()"></div>
+      </div>
+      <p style="font-size:.8rem;color:var(--sub);">この期間の会議・タスクから改善報告を自動で組み立てます。会議のToDoにチェックを入れた日が「完了日」として集計されます。</p>
+    </div>
+    <div class="kpis">
+      <div class="kpi"><div class="v">${d.mtgs.length}</div><div class="l">期間中の会議</div></div>
+      <div class="kpi"><div class="v">${d.kettei.length}</div><div class="l">決定事項</div></div>
+      <div class="kpi"><div class="v">${d.doneTodos.length}</div><div class="l">完了タスク</div></div>
+      <div class="kpi"><div class="v">${d.openTodos.length}</div><div class="l">未完了タスク</div></div>
+    </div>
+    <div class="card">
+      <div class="toolbar" style="margin-bottom:10px;">
+        <button class="btn btn-primary" onclick="copyReport()">📋 報告文をコピー</button>
+        <button class="btn btn-ghost" id="aiPolishBtn" onclick="aiPolish()">✨ AIに清書してもらう</button>
+      </div>
+      <textarea id="reportText" style="width:100%;min-height:340px;padding:12px;border:1px solid var(--line);border-radius:8px;font-family:inherit;font-size:.9rem;line-height:1.7;">${esc(buildReportText(d))}</textarea>
+      <p style="font-size:.78rem;color:var(--sub);margin-top:6px;">文面は自由に手直しできます。コピーしてLINE・メールでそのまま提出。</p>
+    </div>`;
+}
+
+function reportData() {
+  const inRange = x => x && rFrom <= x && x <= rTo;
+  const storeMatch = m => (m.store || '(店舗未設定)') === rStore;
+  const mtgs = meetings.filter(m => storeMatch(m) && inRange(m.date));
+  const kettei = mtgs.flatMap(m => m.result?.kettei || []);
+  const miketei = mtgs.flatMap(m => m.result?.miketei || []);
+  const jikai = mtgs.flatMap(m => m.result?.jikai || []);
+  const risk = mtgs.flatMap(m => m.result?.risk || []);
+  /* 完了タスクは会議日に関係なく「期間内にチェックされたもの」 */
+  const doneTodos = [], openTodos = [];
+  meetings.filter(storeMatch).forEach(m => (m.result?.todo || []).forEach(t => {
+    if (t.done && inRange(t.doneAt)) doneTodos.push({ ...t, mdate: m.date });
+    if (!t.done) openTodos.push({ ...t, mdate: m.date });
+  }));
+  openTodos.sort((a,b) => ({'高':0,'中':1,'低':2}[a.yusen] ?? 1) - ({'高':0,'中':1,'低':2}[b.yusen] ?? 1));
+  return { mtgs, kettei, miketei, jikai, risk, doneTodos, openTodos };
+}
+
+function buildReportText(d) {
+  const line = arr => arr.length ? arr.map(x => '・' + x).join('\n') : '・特になし';
+  return `【週次改善報告】${rStore}(${rFrom}〜${rTo})
+
+■ 今週の会議:${d.mtgs.length}件
+${d.mtgs.length ? d.mtgs.map(m => `・${m.date} ${m.title}`).join('\n') : '・開催なし'}
+
+■ 今週決まったこと(${d.kettei.length}件)
+${line(d.kettei)}
+
+■ 完了した改善タスク(${d.doneTodos.length}件)
+${d.doneTodos.length ? d.doneTodos.map(t => `・${t.task}(担当:${t.tanto})`).join('\n') : '・なし'}
+
+■ 未完了・継続タスク(${d.openTodos.length}件)
+${d.openTodos.length ? d.openTodos.map(t => `・${t.task}(担当:${t.tanto} / 期限:${t.kigen} / 優先度:${t.yusen})`).join('\n') : '・なし'}
+
+■ 来週の論点(未決事項・次回議題)
+${line([...new Set([...d.miketei, ...d.jikai])])}
+
+■ 留意すべきリスク
+${line([...new Set(d.risk)])}`;
+}
+
+function copyReport() {
+  const t = document.getElementById('reportText').value;
+  navigator.clipboard.writeText(t).then(() => toast('報告文をコピーしました')).catch(() => toast('コピーに失敗しました'));
+}
+
+async function aiPolish() {
+  const btn = document.getElementById('aiPolishBtn');
+  btn.disabled = true; btn.textContent = 'AIが清書中…(30秒ほど)';
+  const c = cfg();
+  const src = document.getElementById('reportText').value;
+  const prompt = `あなたは店舗を統括するエリアマネージャーの右腕です。以下の週次改善報告の下書きを、上層部に提出できる簡潔で説得力のある報告文に清書してください。
+条件:事実の捏造禁止/箇条書き中心/冒頭に3行以内の総括を追加/未完了タスクには一言の対策方針を添える/前向きだが問題は隠さないトーン。
+清書後の本文のみを出力してください。
+
+${src}`;
+  try {
+    const res = await fetch(c.url, { method: 'POST', headers: {'Content-Type':'text/plain'},
+      body: JSON.stringify({ action: 'analyze', prompt, token: c.token }) });
+    const d = await res.json();
+    if (d.error) throw new Error(d.error);
+    document.getElementById('reportText').value = d.text.trim();
+    toast('AIが清書しました。内容を確認してください');
+  } catch (e) {
+    toast('⚠ AI清書に失敗:' + e.message);
+  } finally {
+    btn.disabled = false; btn.textContent = '✨ AIに清書してもらう';
+  }
+}
+
+/* ========== 設定 ========== */
+function openSettings() {
+  document.getElementById('gasUrlInput').value = cfg().url;
+  document.getElementById('gasTokenInput').value = cfg().token;
+  document.getElementById('modalBg').style.display = 'flex';
+}
+function closeSettings() { document.getElementById('modalBg').style.display = 'none'; }
+function saveSettings() {
+  localStorage.setItem('kanri_gasurl', document.getElementById('gasUrlInput').value.trim());
+  localStorage.setItem('kanri_gastoken', document.getElementById('gasTokenInput').value.trim());
+  closeSettings();
+  loadData();
+}
+
+/* ========== UI補助 ========== */
+function toast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2200);
+}
+function showError(msg) { const e = document.getElementById('errBox'); e.textContent = msg; e.style.display = 'block'; }
+function hideError() { document.getElementById('errBox').style.display = 'none'; }
+
+/* 初期化 */
+if (cfg().url) loadData(); else openSettings();
+</script>
+</body>
+</html>
