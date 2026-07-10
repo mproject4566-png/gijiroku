@@ -183,9 +183,13 @@
 
   <!-- 録音 -->
   <div class="card rec-area">
+    <div style="margin-bottom:12px; font-size:.85rem;">
+      <label style="margin-right:16px; cursor:pointer;"><input type="radio" name="recmode" value="hq" checked> 高精度モード(推奨)</label>
+      <label style="cursor:pointer;"><input type="radio" name="recmode" value="live"> 簡易モード(リアルタイム)</label>
+    </div>
     <button id="recBtn" onclick="toggleRec()">● 録音<br>開始</button>
     <div id="timer">00:00</div>
-    <div id="recHint">ボタンを押して会議の録音を開始(Chrome / Edge 推奨)</div>
+    <div id="recHint">ボタンを押して会議の録音を開始。高精度モードは5分ごとに自動で文字になります</div>
     <div id="interim"></div>
   </div>
 
@@ -264,6 +268,10 @@ const savedMembers = localStorage.getItem('giji_members');
 if (savedMembers) document.getElementById('mMembers').value = savedMembers;
 const savedStore = localStorage.getItem('giji_store');
 if (savedStore) document.getElementById('mStore').value = savedStore;
+/* 録音モードの記憶 */
+const savedMode = localStorage.getItem('giji_recmode');
+if (savedMode) { const r = document.querySelector('input[name="recmode"][value="' + savedMode + '"]'); if (r) r.checked = true; }
+document.querySelectorAll('input[name="recmode"]').forEach(r => r.addEventListener('change', () => localStorage.setItem('giji_recmode', r.value)));
 setInterval(() => {
   localStorage.setItem('giji_transcript', document.getElementById('transcript').value);
   localStorage.setItem('giji_title', document.getElementById('mTitle').value);
@@ -310,32 +318,136 @@ function appendTranscript(text) {
 
 function toggleRec() { recording ? stopRec() : startRec(); }
 
-function startRec() {
-  recognition = initRecognition();
-  if (!recognition) {
-    showError('このブラウザは音声認識に対応していません。Chrome または Edge をお使いください。文字起こしを直接貼り付けて使うこともできます。');
-    return;
-  }
+/* ---- 高精度モード(音声を5分ごとにWhisperで文字化) ---- */
+let mediaRecorder = null, mediaStream = null, chunkTimer = null;
+let hqActive = false, pendingChunks = 0;
+const CHUNK_MS = 5 * 60 * 1000;
+
+function recMode() { return document.querySelector('input[name="recmode"]:checked').value; }
+
+function pickMime() {
+  if (!window.MediaRecorder) return null;
+  const cands = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4'];
+  for (const c of cands) { if (MediaRecorder.isTypeSupported(c)) return c; }
+  return '';
+}
+
+async function startRec() {
   hideError();
-  try { recognition.start(); } catch(_) {}
+  if (recMode() === 'hq') {
+    if (!localStorage.getItem('giji_gasurl')) {
+      showError('高精度モードには「⚙ 設定」の送信URLと共有コードが必要です。設定するか、簡易モードをお使いください。');
+      return;
+    }
+    if (pickMime() === null) {
+      showError('このブラウザは録音に対応していません。iPhoneはSafari、Android/PCはChromeをお使いください。');
+      return;
+    }
+    try {
+      mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (_) {
+      showError('マイクを使用できません。ブラウザのマイク許可を確認してください。');
+      return;
+    }
+    hqActive = true;
+    startSegment();
+    chunkTimer = setInterval(() => {
+      if (mediaRecorder && mediaRecorder.state === 'recording') mediaRecorder.stop(); /* 区切って送信→onstopで次を開始 */
+    }, CHUNK_MS);
+    recUiOn('録音中(高精度)… 5分ごとに自動で文字になります。停止後、変換完了を待ってからAI整理へ');
+  } else {
+    recognition = initRecognition();
+    if (!recognition) {
+      showError('このブラウザは簡易モードに対応していません。高精度モードをお使いください。');
+      return;
+    }
+    try { recognition.start(); } catch(_) {}
+    recUiOn('録音中…(話した内容が下に文字で入ります)');
+  }
+}
+
+function startSegment() {
+  const mime = pickMime();
+  mediaRecorder = new MediaRecorder(mediaStream, mime ? { mimeType: mime, audioBitsPerSecond: 32000 } : { audioBitsPerSecond: 32000 });
+  const parts = [];
+  mediaRecorder.ondataavailable = e => { if (e.data && e.data.size) parts.push(e.data); };
+  mediaRecorder.onstop = () => {
+    const blob = new Blob(parts, { type: mediaRecorder.mimeType || 'audio/webm' });
+    uploadChunk(blob);
+    if (hqActive) startSegment();
+    else if (mediaStream) { mediaStream.getTracks().forEach(t => t.stop()); mediaStream = null; }
+  };
+  mediaRecorder.start();
+}
+
+function blobToB64(blob) {
+  return new Promise((ok, ng) => {
+    const fr = new FileReader();
+    fr.onload = () => ok(String(fr.result).split(',')[1]);
+    fr.onerror = ng;
+    fr.readAsDataURL(blob);
+  });
+}
+
+async function uploadChunk(blob) {
+  if (!blob || blob.size < 3000) return; /* ほぼ無音は送らない */
+  pendingChunks++; updateHqStatus();
+  const url = localStorage.getItem('giji_gasurl');
+  const hint = '【' + (document.getElementById('mTitle').value || '会議') + '】店舗:' +
+    (document.getElementById('mStore').value || '') + ' 参加者:' +
+    (document.getElementById('mMembers').value || '') + '。日本語の社内会議の録音。';
+  try {
+    const b64 = await blobToB64(blob);
+    const res = await fetch(url, {
+      method: 'POST', headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({
+        action: 'transcribe', audio: b64,
+        mime: blob.type, ext: blob.type.includes('mp4') ? 'mp4' : 'webm',
+        hint, token: localStorage.getItem('giji_gastoken') || ''
+      })
+    });
+    const d = await res.json();
+    if (d.error) throw new Error(d.error);
+    if (d.text && d.text.trim()) {
+      const ta = document.getElementById('transcript');
+      ta.value += (ta.value ? '\n\n' : '') + d.text.trim();
+      ta.scrollTop = ta.scrollHeight;
+    }
+  } catch (e) {
+    showError('一部の音声の文字化に失敗しました:' + e.message + '(録音は継続しています)');
+  } finally {
+    pendingChunks--; updateHqStatus();
+  }
+}
+
+function updateHqStatus() {
+  const el = document.getElementById('interim');
+  el.textContent = pendingChunks > 0 ? '文字化を処理中…(残り' + pendingChunks + '件)' : '';
+}
+
+/* ---- 共通UI ---- */
+function recUiOn(hint) {
   recording = true;
   startTime = Date.now();
   timerInt = setInterval(() => { document.getElementById('timer').textContent = elapsedStr(); }, 500);
   const btn = document.getElementById('recBtn');
   btn.classList.add('recording');
   btn.innerHTML = '■ 録音<br>停止';
-  document.getElementById('recHint').textContent = '録音中…(話した内容が下に文字で入ります)';
+  document.getElementById('recHint').textContent = hint;
 }
 
 function stopRec() {
   recording = false;
+  hqActive = false;
+  if (chunkTimer) { clearInterval(chunkTimer); chunkTimer = null; }
+  if (mediaRecorder && mediaRecorder.state === 'recording') { try { mediaRecorder.stop(); } catch(_){} }
   if (recognition) { try { recognition.stop(); } catch(_){} }
   clearInterval(timerInt);
   const btn = document.getElementById('recBtn');
   btn.classList.remove('recording');
   btn.innerHTML = '● 録音<br>開始';
-  document.getElementById('recHint').textContent = '録音を停止しました。「AIで議事録に整理する」を押してください。';
-  document.getElementById('interim').textContent = '';
+  document.getElementById('recHint').textContent = '録音を停止しました。文字化が終わったら「AIで議事録に整理する」を押してください。';
+  if (recMode() === 'live') document.getElementById('interim').textContent = '';
 }
 
 function elapsedStr() {
@@ -385,6 +497,10 @@ async function postGas(payload) {
 
 /* ========== AI整理 ========== */
 async function analyze() {
+  if (pendingChunks > 0) {
+    showError('音声の文字化を処理中です(残り' + pendingChunks + '件)。完了してからもう一度押してください。');
+    return;
+  }
   const text = document.getElementById('transcript').value.trim();
   if (!text) { showError('文字起こしが空です。録音するか、メモを貼り付けてください。'); return; }
   const apiKey = localStorage.getItem('giji_apikey');
@@ -454,7 +570,7 @@ ${text}
         throw new Error('AI処理エラー (' + res.status + '): ' + msg);
       }
       const data = await res.json();
-      raw = data.content[0].text.trim();
+      raw = (data.content || []).filter(c => c.type === 'text').map(c => c.text).join('').trim();
     } else {
       /* 方式B:会社のGoogle経由でAI処理(APIキー不要・通常はこちら) */
       const res = await fetch(gasUrl, {
@@ -464,7 +580,8 @@ ${text}
       const d = await res.json();
       if (d.error === 'unauthorized') throw new Error('共有コードが違います。「⚙ 設定」で確認してください。');
       if (d.error) throw new Error(d.error);
-      raw = d.text.trim();
+      raw = (d.text || '').trim();
+      if (!raw) throw new Error('AIの応答が空でした。もう一度お試しください。');
     }
     raw = raw.replace(/^```json\s*/i, '').replace(/^```\s*/, '').replace(/```\s*$/, '');
     lastResult = JSON.parse(raw);
