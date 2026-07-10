@@ -217,7 +217,7 @@
 
   <!-- 過去の議事録 -->
   <div class="card" style="margin-top:18px;">
-    <h2>🗂 過去の議事録</h2>
+    <h2>🗂 過去の議事録(店舗で共有) <button class="copy-btn" onclick="loadShared(true)">🔄 更新</button></h2>
     <div id="historyList" class="empty">まだ保存された議事録はありません。AI整理すると自動で保存されます。</div>
   </div>
 </main>
@@ -682,6 +682,28 @@ function copyText(text, msg) {
 function getHistory() { return JSON.parse(localStorage.getItem('giji_history') || '[]'); }
 function setHistory(h) { localStorage.setItem('giji_history', JSON.stringify(h)); }
 
+/* 店舗内共有:シートから自店舗の議事録を取得。取得できない時は端末内の控えを表示 */
+let sharedMeetings = null;
+function allMeetings() { return sharedMeetings || getHistory(); }
+function isShared() { return !!sharedMeetings; }
+
+async function loadShared(manual) {
+  const url = localStorage.getItem('giji_gasurl');
+  const store = document.getElementById('mStore').value.trim();
+  if (!url) { if (manual) toast('⚙設定の送信URLが未設定です'); return; }
+  if (!store) { if (manual) toast('店舗・チーム名を入力すると店舗の履歴を共有できます'); return; }
+  if (manual) toast('読み込み中…');
+  try {
+    const res = await fetch(url + '?token=' + encodeURIComponent(localStorage.getItem('giji_gastoken') || '') + '&store=' + encodeURIComponent(store));
+    const d = await res.json();
+    if (d.meetings) {
+      sharedMeetings = d.meetings.sort((a,b) => (b.date||'').localeCompare(a.date||'') || String(b.id).localeCompare(String(a.id)));
+      renderHistory(); renderPending();
+      if (manual) toast('最新の状態に更新しました(' + sharedMeetings.length + '件)');
+    } else if (manual) toast('⚠ 読み込みに失敗しました(共有コードを確認)');
+  } catch (_) { if (manual) toast('⚠ 読み込みに失敗しました(通信を確認)'); }
+}
+
 function saveHistory(result, title, date, members, store) {
   const h = getHistory();
   /* ToDoに完了フラグを付ける */
@@ -694,33 +716,33 @@ function saveHistory(result, title, date, members, store) {
   renderPending();
   /* 管理シートへ自動送信(設定済みの場合のみ) */
   postGas({ action: 'save', meeting }).then(ok => {
-    if (ok === true) toast('会議ログを管理シートに送信しました ☁');
+    if (ok === true) { toast('会議ログを管理シートに送信しました ☁'); loadShared(); }
     else if (ok === false) toast('⚠ 管理シートへの送信に失敗しました(議事録は端末に保存済み)');
   });
 }
 
 function renderHistory() {
-  const h = getHistory();
+  const h = allMeetings();
   const el = document.getElementById('historyList');
   if (!h.length) { el.className = 'empty'; el.textContent = 'まだ保存された議事録はありません。AI整理すると自動で保存されます。'; return; }
   el.className = '';
   el.innerHTML = h.map(m => {
-    const openTodos = (m.result.todo || []).filter(t => !t.done).length;
+    const openTodos = ((m.result && m.result.todo) || []).filter(t => !t.done).length;
     return `<div style="display:flex;justify-content:space-between;align-items:center;padding:9px 4px;border-bottom:1px solid var(--line);gap:8px;">
       <div style="min-width:0;">
         <b style="font-size:.9rem;">${esc(m.title)}</b>
         <span style="font-size:.78rem;color:var(--sub);"> ${esc(m.date)}${openTodos ? ' / 未完了ToDo ' + openTodos + '件' : ''}</span>
       </div>
       <div style="flex-shrink:0;">
-        <button class="copy-btn" onclick="viewHistory(${m.id})">開く</button>
-        <button class="copy-btn" onclick="deleteHistory(${m.id})" style="color:#b91c1c;">削除</button>
+        <button class="copy-btn" onclick="viewHistory('${m.id}')">開く</button>
+        ${isShared() ? '' : `<button class="copy-btn" onclick="deleteHistory('${m.id}')" style="color:#b91c1c;">削除</button>`}
       </div>
     </div>`;
   }).join('');
 }
 
 function viewHistory(id) {
-  const m = getHistory().find(x => x.id === id);
+  const m = allMeetings().find(x => String(x.id) === String(id));
   if (!m) return;
   lastResult = m.result;
   document.getElementById('mTitle').value = m.title;
@@ -734,13 +756,13 @@ function viewHistory(id) {
 
 function deleteHistory(id) {
   if (!confirm('この議事録を削除しますか?')) return;
-  setHistory(getHistory().filter(x => x.id !== id));
+  setHistory(getHistory().filter(x => String(x.id) !== String(id)));
   renderHistory();
   renderPending();
 }
 
 function renderPending() {
-  const h = getHistory();
+  const h = allMeetings();
   const card = document.getElementById('pendingCard');
   const list = document.getElementById('pendingList');
   const carry = document.getElementById('jikaiCarry');
@@ -754,7 +776,7 @@ function renderPending() {
   list.innerHTML = items.length ? items.map(it => {
     const cls = it.t.yusen === '高' ? 'pri-high' : it.t.yusen === '低' ? 'pri-low' : 'pri-mid';
     return `<label style="display:flex;align-items:flex-start;gap:9px;padding:7px 2px;border-bottom:1px dashed var(--line);cursor:pointer;font-size:.9rem;">
-      <input type="checkbox" onchange="toggleTodo(${it.mid},${it.idx},this.checked)" style="margin-top:4px;">
+      <input type="checkbox" onchange="toggleTodo('${it.mid}',${it.idx},this.checked)" style="margin-top:4px;">
       <span>${esc(it.t.task)} <span style="color:var(--sub);font-size:.78rem;">(担当:${esc(it.t.tanto)} / 期限:${esc(it.t.kigen)} / ${esc(it.mdate)}の会議)</span> <span class="pri ${cls}">${esc(it.t.yusen)}</span></span>
     </label>`;
   }).join('') : '<div class="empty">未完了のToDoはありません 🎉</div>';
@@ -764,21 +786,23 @@ function renderPending() {
 }
 
 function toggleTodo(mid, idx, done) {
-  const h = getHistory();
-  const m = h.find(x => x.id === mid);
+  const h = allMeetings();
+  const m = h.find(x => String(x.id) === String(mid));
   if (m && m.result.todo && m.result.todo[idx]) {
     m.result.todo[idx].done = done;
     m.result.todo[idx].doneAt = done ? new Date().toISOString().slice(0,10) : '';
-    setHistory(h);
+    if (!isShared()) setHistory(h);
     toast(done ? 'ToDoを完了にしました 👏' : 'ToDoを未完了に戻しました');
     setTimeout(renderPending, 400);
     renderHistory();
-    postGas({ action: 'toggle', id: mid, idx, done }); /* 管理シートにも反映 */
+    postGas({ action: 'toggle', id: mid, idx, done }); /* 管理シートにも反映(店舗の全員に共有) */
   }
 }
 
 renderHistory();
 renderPending();
+loadShared(); /* 店舗の共有履歴を取得(設定済みの場合) */
+document.getElementById('mStore').addEventListener('change', () => { sharedMeetings = null; loadShared(); });
 
 /* ========== UI補助 ========== */
 function toast(msg) {
