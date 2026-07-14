@@ -183,14 +183,11 @@
 
   <!-- 録音 -->
   <div class="card rec-area">
-    <div style="margin-bottom:12px; font-size:.85rem;">
-      <label style="margin-right:16px; cursor:pointer;"><input type="radio" name="recmode" value="hq" checked> 高精度モード(推奨)</label>
-      <label style="cursor:pointer;"><input type="radio" name="recmode" value="live"> 簡易モード(リアルタイム)</label>
-    </div>
     <button id="recBtn" onclick="toggleRec()">● 録音<br>開始</button>
     <div id="timer">00:00</div>
     <div id="recHint">ボタンを押して会議の録音を開始。高精度モードは5分ごとに自動で文字になります</div>
     <div id="interim"></div>
+    <div id="livePrev" style="font-size:.85rem;color:var(--sub);background:#f8faff;border-radius:8px;padding:8px 12px;margin-top:8px;text-align:left;display:none;"></div>
   </div>
 
   <!-- 文字起こし -->
@@ -226,7 +223,7 @@
 <div class="modal-bg" id="modalBg" onclick="if(event.target===this)closeSettings()">
   <div class="modal">
     <h2>⚙ 設定</h2>
-    <p>管理者から教わった「送信URL」と「共有コード」の2つを入力してください。これだけで使えます。</p>
+    <p>通常は入力不要です(会社で設定済み)。管理者から個別に指示があった場合のみ、送信URLと共有コードを入力してください。</p>
     <div class="row">
       <label>送信URL(https://script.google.com/... で始まる)</label>
       <input type="text" id="gasUrlInput" placeholder="https://script.google.com/macros/s/.../exec">
@@ -250,6 +247,16 @@
 <div class="toast" id="toast"></div>
 
 <script>
+/* ============================================================
+   会社の共通設定(管理者が配布前にここを書き換える)
+   ここに入れておけば、従業員は設定なしでそのまま使えます。
+   ============================================================ */
+const DEFAULT_GAS_URL = 'https://script.google.com/macros/s/AKfycbyJrxlPKUt4vMJWCQ8MtuG4_nooaSO1GepvALb3ey9Wty3Qeeyoxl0Fg-5WRNctMh_NqA/exec';  // ← Apps Scriptの送信URL(https://script.google.com/macros/s/…/exec)
+const DEFAULT_TOKEN   = 'kaigi2026';  // ← 共有コード(例: kaigi2026)
+
+function gasUrl() { return localStorage.getItem('giji_gasurl') || DEFAULT_GAS_URL; }
+function gasToken() { return localStorage.getItem('giji_gastoken') || DEFAULT_TOKEN; }
+
 /* ========== 状態 ========== */
 let recognition = null;
 let recording = false;
@@ -268,10 +275,6 @@ const savedMembers = localStorage.getItem('giji_members');
 if (savedMembers) document.getElementById('mMembers').value = savedMembers;
 const savedStore = localStorage.getItem('giji_store');
 if (savedStore) document.getElementById('mStore').value = savedStore;
-/* 録音モードの記憶 */
-const savedMode = localStorage.getItem('giji_recmode');
-if (savedMode) { const r = document.querySelector('input[name="recmode"][value="' + savedMode + '"]'); if (r) r.checked = true; }
-document.querySelectorAll('input[name="recmode"]').forEach(r => r.addEventListener('change', () => localStorage.setItem('giji_recmode', r.value)));
 setInterval(() => {
   localStorage.setItem('giji_transcript', document.getElementById('transcript').value);
   localStorage.setItem('giji_title', document.getElementById('mTitle').value);
@@ -280,7 +283,14 @@ setInterval(() => {
 }, 3000);
 
 /* ========== 録音(音声認識) ========== */
-function initRecognition() {
+let previewBuf = '';
+function updatePreview(interim) {
+  const el = document.getElementById('livePrev');
+  const txt = (previewBuf + interim).slice(-140);
+  if (txt) { el.style.display = 'block'; el.textContent = '🎧 ライブ表示(参考・確定版は5分ごとに上の文字起こし欄へ): …' + txt; }
+}
+
+function initRecognition(preview) {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SR) return null;
   const r = new SR();
@@ -291,17 +301,18 @@ function initRecognition() {
     let interim = '';
     for (let i = e.resultIndex; i < e.results.length; i++) {
       const t = e.results[i][0].transcript;
-      if (e.results[i].isFinal) appendTranscript(t);
+      if (e.results[i].isFinal) { if (preview) previewBuf += t; else appendTranscript(t); }
       else interim += t;
     }
-    document.getElementById('interim').textContent = interim;
+    if (preview) updatePreview(interim);
+    else document.getElementById('interim').textContent = interim;
   };
   r.onerror = (e) => {
-    if (e.error === 'not-allowed') {
+    if (e.error === 'not-allowed' && !preview) {
       showError('マイクの使用が許可されていません。ブラウザのマイク許可を確認してください。');
       stopRec();
     }
-    /* no-speech 等は自動再開に任せる */
+    /* previewは失敗しても本体(Whisper)に影響なし。no-speech等は自動再開に任せる */
   };
   r.onend = () => { if (recording) { try { r.start(); } catch(_){} } };
   return r;
@@ -323,7 +334,7 @@ let mediaRecorder = null, mediaStream = null, chunkTimer = null;
 let hqActive = false, pendingChunks = 0;
 const CHUNK_MS = 5 * 60 * 1000;
 
-function recMode() { return document.querySelector('input[name="recmode"]:checked').value; }
+function recMode() { return 'hq'; }
 
 function pickMime() {
   if (!window.MediaRecorder) return null;
@@ -334,36 +345,30 @@ function pickMime() {
 
 async function startRec() {
   hideError();
-  if (recMode() === 'hq') {
-    if (!localStorage.getItem('giji_gasurl')) {
-      showError('高精度モードには「⚙ 設定」の送信URLと共有コードが必要です。設定するか、簡易モードをお使いください。');
-      return;
-    }
-    if (pickMime() === null) {
-      showError('このブラウザは録音に対応していません。iPhoneはSafari、Android/PCはChromeをお使いください。');
-      return;
-    }
-    try {
-      mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    } catch (_) {
-      showError('マイクを使用できません。ブラウザのマイク許可を確認してください。');
-      return;
-    }
-    hqActive = true;
-    startSegment();
-    chunkTimer = setInterval(() => {
-      if (mediaRecorder && mediaRecorder.state === 'recording') mediaRecorder.stop(); /* 区切って送信→onstopで次を開始 */
-    }, CHUNK_MS);
-    recUiOn('録音中(高精度)… 5分ごとに自動で文字になります。停止後、変換完了を待ってからAI整理へ');
-  } else {
-    recognition = initRecognition();
-    if (!recognition) {
-      showError('このブラウザは簡易モードに対応していません。高精度モードをお使いください。');
-      return;
-    }
-    try { recognition.start(); } catch(_) {}
-    recUiOn('録音中…(話した内容が下に文字で入ります)');
+  if (!gasUrl()) {
+    showError('録音には「⚙ 設定」の送信URLと共有コードが必要です。管理者に確認してください。');
+    return;
   }
+  if (pickMime() === null) {
+    showError('このブラウザは録音に対応していません。iPhoneはSafari、Android/PCはChromeをお使いください。');
+    return;
+  }
+  try {
+    mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (_) {
+    showError('マイクを使用できません。ブラウザのマイク許可を確認してください。');
+    return;
+  }
+  hqActive = true;
+  startSegment();
+  chunkTimer = setInterval(() => {
+    if (mediaRecorder && mediaRecorder.state === 'recording') mediaRecorder.stop(); /* 区切って送信→onstopで次を開始 */
+  }, CHUNK_MS);
+  recUiOn('録音中… 5分ごとに確定版の文字が入ります。停止後、変換完了を待ってからAI整理へ');
+  /* 参考用のライブ表示を並走(失敗しても録音本体には影響なし) */
+  previewBuf = '';
+  recognition = initRecognition(true);
+  if (recognition) { try { recognition.start(); } catch(_) {} }
 }
 
 function startSegment() {
@@ -392,7 +397,7 @@ function blobToB64(blob) {
 async function uploadChunk(blob) {
   if (!blob || blob.size < 3000) return; /* ほぼ無音は送らない */
   pendingChunks++; updateHqStatus();
-  const url = localStorage.getItem('giji_gasurl');
+  const url = gasUrl();
   const hint = '【' + (document.getElementById('mTitle').value || '会議') + '】店舗:' +
     (document.getElementById('mStore').value || '') + ' 参加者:' +
     (document.getElementById('mMembers').value || '') + '。日本語の社内会議の録音。';
@@ -403,7 +408,7 @@ async function uploadChunk(blob) {
       body: JSON.stringify({
         action: 'transcribe', audio: b64,
         mime: blob.type, ext: blob.type.includes('mp4') ? 'mp4' : 'webm',
-        hint, token: localStorage.getItem('giji_gastoken') || ''
+        hint, token: gasToken()
       })
     });
     const d = await res.json();
@@ -447,7 +452,9 @@ function stopRec() {
   btn.classList.remove('recording');
   btn.innerHTML = '● 録音<br>開始';
   document.getElementById('recHint').textContent = '録音を停止しました。文字化が終わったら「AIで議事録に整理する」を押してください。';
-  if (recMode() === 'live') document.getElementById('interim').textContent = '';
+  previewBuf = '';
+  const lp = document.getElementById('livePrev');
+  lp.textContent = ''; lp.style.display = 'none';
 }
 
 function elapsedStr() {
@@ -485,9 +492,9 @@ function saveSettings() {
 
 /* ========== 管理シートへの送信 ========== */
 async function postGas(payload) {
-  const url = localStorage.getItem('giji_gasurl');
+  const url = gasUrl();
   if (!url) return null; /* 未設定なら単体利用 */
-  payload.token = localStorage.getItem('giji_gastoken') || '';
+  payload.token = gasToken();
   try {
     const res = await fetch(url, { method: 'POST', headers: {'Content-Type': 'text/plain'}, body: JSON.stringify(payload) });
     const d = await res.json();
@@ -504,8 +511,8 @@ async function analyze() {
   const text = document.getElementById('transcript').value.trim();
   if (!text) { showError('文字起こしが空です。録音するか、メモを貼り付けてください。'); return; }
   const apiKey = localStorage.getItem('giji_apikey');
-  const gasUrl = localStorage.getItem('giji_gasurl');
-  if (!apiKey && !gasUrl) { showError('先に右上の「⚙ 設定」から、管理者に教わった「送信URL」と「共有コード」を登録してください。'); openSettings(); return; }
+  const gUrl = gasUrl();
+  if (!apiKey && !gUrl) { showError('先に右上の「⚙ 設定」から、管理者に教わった「送信URL」と「共有コード」を登録してください。'); openSettings(); return; }
   if (recording) stopRec();
   hideError();
 
@@ -573,9 +580,9 @@ ${text}
       raw = (data.content || []).filter(c => c.type === 'text').map(c => c.text).join('').trim();
     } else {
       /* 方式B:会社のGoogle経由でAI処理(APIキー不要・通常はこちら) */
-      const res = await fetch(gasUrl, {
+      const res = await fetch(gUrl, {
         method: 'POST', headers: {'Content-Type': 'text/plain'},
-        body: JSON.stringify({ action: 'analyze', prompt, token: localStorage.getItem('giji_gastoken') || '' })
+        body: JSON.stringify({ action: 'analyze', prompt, token: gasToken() })
       });
       const d = await res.json();
       if (d.error === 'unauthorized') throw new Error('共有コードが違います。「⚙ 設定」で確認してください。');
@@ -688,13 +695,13 @@ function allMeetings() { return sharedMeetings || getHistory(); }
 function isShared() { return !!sharedMeetings; }
 
 async function loadShared(manual) {
-  const url = localStorage.getItem('giji_gasurl');
+  const url = gasUrl();
   const store = document.getElementById('mStore').value.trim();
   if (!url) { if (manual) toast('⚙設定の送信URLが未設定です'); return; }
   if (!store) { if (manual) toast('店舗・チーム名を入力すると店舗の履歴を共有できます'); return; }
   if (manual) toast('読み込み中…');
   try {
-    const res = await fetch(url + '?token=' + encodeURIComponent(localStorage.getItem('giji_gastoken') || '') + '&store=' + encodeURIComponent(store));
+    const res = await fetch(url + '?token=' + encodeURIComponent(gasToken()) + '&store=' + encodeURIComponent(store));
     const d = await res.json();
     if (d.meetings) {
       sharedMeetings = d.meetings.sort((a,b) => (b.date||'').localeCompare(a.date||'') || String(b.id).localeCompare(String(a.id)));
