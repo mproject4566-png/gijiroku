@@ -136,7 +136,7 @@ const SECTIONS = [
   { key: 'todo',    title: 'ToDoリスト', icon: '📌' },
   { key: 'jikai',   title: '次回会議で決めるべきこと', icon: '📅' },
   { key: 'risk',    title: '確認すべきリスク', icon: '⚠️' },
-  { key: 'followup',title: 'フォローアップ文面', icon: '✉️' }
+  { key: 'hyoka',   title: '会議の採点と改善アドバイス', icon: '📊' }
 ];
 
 function esc(s) { const d = document.createElement('div'); d.textContent = s ?? ''; return d.innerHTML; }
@@ -248,8 +248,10 @@ function showDetail(id) {
         : '<div class="empty">該当なし</div>';
     } else if (sec.key === 'kanshin') {
       body = (v && v.length) ? '<ul>' + v.map(k => `<li><b>${esc(k.name)}</b>:${esc(k.point)}</li>`).join('') + '</ul>' : '<div class="empty">該当なし</div>';
-    } else if (sec.key === 'followup') {
-      body = v ? `<div class="followup-box">${esc(v)}</div>` : '<div class="empty">該当なし</div>';
+    } else if (sec.key === 'hyoka') {
+      body = v ? `<div style="font-size:1.1rem;color:#d97706;">${'★'.repeat(v.score||0)}${'☆'.repeat(Math.max(0,5-(v.score||0)))} <b style="color:var(--ink);">${v.score||'-'}/5</b></div>
+        <p style="margin-top:6px;"><b>👍 良かった点:</b>${esc(v.yoi||'')}</p>
+        <p><b>💡 次回への提案:</b>${esc(v.kaizen||'')}</p>` : '<div class="empty">該当なし</div>';
     } else {
       body = (v && v.length) ? '<ul>' + v.map(x => `<li>${esc(x)}</li>`).join('') + '</ul>' : '<div class="empty">該当なし</div>';
     }
@@ -319,12 +321,13 @@ function renderDash() {
   const byStore = {};
   meetings.forEach(m => {
     const s = m.store || '(店舗未設定)';
-    byStore[s] = byStore[s] || { count: 0, month: 0, kettei: 0, todo: 0, done: 0, miketei: 0 };
+    byStore[s] = byStore[s] || { count: 0, month: 0, kettei: 0, todo: 0, done: 0, miketei: 0, scoreSum: 0, scoreN: 0 };
     const b = byStore[s];
     b.count++;
     if ((m.date||'').startsWith(thisMonth)) b.month++;
     b.kettei += (m.result?.kettei || []).length;
     b.miketei += (m.result?.miketei || []).length;
+    if (m.result?.hyoka?.score) { b.scoreSum += m.result.hyoka.score; b.scoreN++; }
     (m.result?.todo || []).forEach(t => { b.todo++; if (t.done) b.done++; });
   });
 
@@ -337,12 +340,14 @@ function renderDash() {
     </div>
     <div class="card" style="padding:0;overflow-x:auto;">
       <table>
-        <tr><th>店舗</th><th>今月会議</th><th>累計会議</th><th>決定事項</th><th>未決事項</th><th>ToDo消化率</th></tr>
+        <tr><th>店舗</th><th>今月会議</th><th>累計会議</th><th>決定事項</th><th>未決事項</th><th>会議採点(平均)</th><th>ToDo消化率</th></tr>
         ${Object.entries(byStore).map(([s,b]) => {
           const rate = b.todo ? Math.round(b.done/b.todo*100) : 0;
+          const avg = b.scoreN ? (b.scoreSum/b.scoreN).toFixed(1) : '-';
           return `<tr>
             <td><b>${esc(s)}</b></td><td>${b.month}</td><td>${b.count}</td>
             <td>${b.kettei}</td><td>${b.miketei}</td>
+            <td>${avg === '-' ? '-' : '⭐ ' + avg + '/5'}</td>
             <td><div style="display:flex;align-items:center;gap:8px;">
               <div class="bar-bg" style="flex:1;"><div class="bar" style="width:${rate}%;${rate<50?'background:var(--warn);':''}"></div></div>
               <span style="font-size:.8rem;white-space:nowrap;">${rate}%(${b.done}/${b.todo})</span>
@@ -414,15 +419,17 @@ function reportData() {
     if (!t.done) openTodos.push({ ...t, mdate: m.date });
   }));
   openTodos.sort((a,b) => ({'高':0,'中':1,'低':2}[a.yusen] ?? 1) - ({'高':0,'中':1,'低':2}[b.yusen] ?? 1));
-  return { mtgs, kettei, miketei, jikai, risk, doneTodos, openTodos };
+  const scores = mtgs.map(m => m.result?.hyoka?.score).filter(Boolean);
+  const avgScore = scores.length ? (scores.reduce((a,x)=>a+x,0)/scores.length).toFixed(1) : null;
+  return { mtgs, kettei, miketei, jikai, risk, doneTodos, openTodos, avgScore };
 }
 
 function buildReportText(d) {
   const line = arr => arr.length ? arr.map(x => '・' + x).join('\n') : '・特になし';
   return `【週次改善報告】${rStore}(${rFrom}〜${rTo})
 
-■ 今週の会議:${d.mtgs.length}件
-${d.mtgs.length ? d.mtgs.map(m => `・${m.date} ${m.title}`).join('\n') : '・開催なし'}
+■ 今週の会議:${d.mtgs.length}件${d.avgScore ? '(会議の質 AI採点平均:' + d.avgScore + '/5)' : ''}
+${d.mtgs.length ? d.mtgs.map(m => `・${m.date} ${m.title}${m.result?.hyoka?.score ? '(採点' + m.result.hyoka.score + '/5)' : ''}`).join('\n') : '・開催なし'}
 
 ■ 今週決まったこと(${d.kettei.length}件)
 ${line(d.kettei)}
