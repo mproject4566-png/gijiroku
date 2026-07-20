@@ -207,7 +207,8 @@
   <!-- 結果 -->
   <div id="results" style="display:none; margin-top:18px;">
     <div class="toolbar" style="margin-bottom:14px;">
-      <button class="btn btn-primary" onclick="copyAllMd()">📄 議事録全体をコピー(そのまま共有用)</button>
+      <button class="btn btn-primary" onclick="printMinutes()">🖨 PDFで保存・印刷(配布用)</button>
+      <button class="btn btn-ghost" onclick="copyAllMd()">📄 テキストでコピー</button>
     </div>
     <div id="sectionsWrap"></div>
   </div>
@@ -251,8 +252,8 @@
    会社の共通設定(管理者が配布前にここを書き換える)
    ここに入れておけば、従業員は設定なしでそのまま使えます。
    ============================================================ */
-const DEFAULT_GAS_URL = 'https://script.google.com/macros/s/AKfycbyJrxlPKUt4vMJWCQ8MtuG4_nooaSO1GepvALb3ey9Wty3Qeeyoxl0Fg-5WRNctMh_NqA/exec';  // ← Apps Scriptの送信URL(https://script.google.com/macros/s/…/exec)
-const DEFAULT_TOKEN   = 'kaigi2026';  // ← 共有コード(例: kaigi2026)
+const DEFAULT_GAS_URL = '';  // ← Apps Scriptの送信URL(https://script.google.com/macros/s/…/exec)
+const DEFAULT_TOKEN   = '';  // ← 共有コード(例: kaigi2026)
 
 function gasUrl() { return localStorage.getItem('giji_gasurl') || DEFAULT_GAS_URL; }
 function gasToken() { return localStorage.getItem('giji_gastoken') || DEFAULT_TOKEN; }
@@ -541,16 +542,17 @@ ${text}
 # 出力形式(JSON)
 {
  "kettei": ["決定事項を1件ずつ"],
- "miketei": ["未決事項(議論されたが結論が出なかったこと)を1件ずつ"],
+ "miketei": ["未決事項を1件ずつ。末尾に(理由:なぜ決まらなかったか/次に必要:決めるために要る情報や人)を添える"],
  "kanshin": [{"name":"参加者名","point":"その人の関心・懸念の要約"}],
  "suuji": ["会議中に出た重要な数字・金額・日付・固有名詞を、文脈がわかる形で1件ずつ"],
  "todo": [{"task":"やること","tanto":"担当者(明言なければ推定し(推定)と付記、不明なら未定)","kigen":"期限(不明なら未定)","yusen":"高/中/低"}],
  "jikai": ["次回会議で決めるべきことを1件ずつ"],
  "risk": ["会議では明言されなかったが確認すべきリスク・見落としの可能性を1件ずつ"],
- "followup": "参加者に今すぐ送るフォローアップ文面。決定事項とToDoを簡潔に共有し、前向きで士気が上がるトーンで。そのままLINEやメールに貼れる完成文にする。"
+ "hyoka": {"score": 1から5の整数, "yoi": "この会議の良かった点(1〜2文)", "kaizen": "次回の会議をもっと良くする具体的な改善提案(1〜2文)"}
 }
 
-該当が無い項目は空配列にしてください。文字起こしに無い情報を創作しないでください(riskの指摘は例外として、書かれていない盲点を指摘してよい)。`;
+hyokaの採点基準:5=議題がすべて決定かToDoに落ち、無駄がない/3=一部は決まったが先送りも多い/1=決定ゼロ・雑談中心。甘くせず、率直に採点してください。
+該当が無い項目は空配列にしてください。文字起こしに無い情報を創作しないでください(riskとhyokaは例外として、書かれていない盲点の指摘や評価をしてよい)。`;
 
   try {
     let raw;
@@ -613,7 +615,7 @@ const SECTIONS = [
   { key: 'todo',    title: 'ToDoリスト', icon: '📌' },
   { key: 'jikai',   title: '次回会議で決めるべきこと', icon: '📅' },
   { key: 'risk',    title: '確認すべきリスク(会議で明言されなかった点)', icon: '⚠️' },
-  { key: 'followup',title: '今すぐ送るフォローアップ文面', icon: '✉️' }
+  { key: 'hyoka',   title: '会議の採点と改善アドバイス', icon: '📊' }
 ];
 
 function esc(s) { const d = document.createElement('div'); d.textContent = s ?? ''; return d.innerHTML; }
@@ -636,8 +638,10 @@ function renderResults(r) {
       bodyHtml = (v && v.length)
         ? '<ul>' + v.map(k => `<li><b>${esc(k.name)}</b>:${esc(k.point)}</li>`).join('') + '</ul>'
         : '<div class="empty">該当なし</div>';
-    } else if (sec.key === 'followup') {
-      bodyHtml = v ? `<div class="followup-box">${esc(v)}</div>` : '<div class="empty">該当なし</div>';
+    } else if (sec.key === 'hyoka') {
+      bodyHtml = v ? `<div style="font-size:1.15rem;color:#d97706;">${'★'.repeat(v.score||0)}${'☆'.repeat(Math.max(0,5-(v.score||0)))} <b style="color:var(--ink);">${v.score||'-'}/5</b></div>
+        <p style="margin-top:6px;"><b>👍 良かった点:</b>${esc(v.yoi||'')}</p>
+        <p><b>💡 次回への提案:</b>${esc(v.kaizen||'')}</p>` : '<div class="empty">該当なし</div>';
     } else {
       bodyHtml = (v && v.length)
         ? '<ul>' + v.map(x => `<li>${esc(x)}</li>`).join('') + '</ul>'
@@ -659,7 +663,11 @@ function sectionToText(key) {
   const v = lastResult[key];
   if (key === 'todo') return (v||[]).map(t => `・${t.task}(担当:${t.tanto} / 期限:${t.kigen} / 優先度:${t.yusen})`).join('\n');
   if (key === 'kanshin') return (v||[]).map(k => `・${k.name}:${k.point}`).join('\n');
-  if (key === 'followup') return v || '';
+  if (key === 'hyoka') {
+    if (!v) return '';
+    const s = v.score || 0;
+    return '採点:' + '★'.repeat(s) + '☆'.repeat(Math.max(0,5-s)) + '(' + s + '/5)\n良かった点:' + (v.yoi||'') + '\n次回への提案:' + (v.kaizen||'');
+  }
   return (v||[]).map(x => '・' + x).join('\n');
 }
 function copySection(key) {
@@ -676,6 +684,35 @@ function copyAllMd() {
   });
   copyText(md, '議事録全体をコピーしました');
 }
+function printMinutes() {
+  if (!lastResult) { toast('先にAI整理を実行してください'); return; }
+  const title = document.getElementById('mTitle').value || '(会議名未設定)';
+  const date = document.getElementById('mDate').value;
+  const store = document.getElementById('mStore').value;
+  const members = document.getElementById('mMembers').value;
+  let body = '';
+  SECTIONS.forEach((sec, i) => {
+    const t = sectionToText(sec.key) || '該当なし';
+    body += '<h2>' + (i+1) + '. ' + sec.title + '</h2><div class="sec">' + esc(t).replace(/\n/g, '<br>') + '</div>';
+  });
+  const w = window.open('', '_blank');
+  if (!w) { toast('ポップアップがブロックされました。許可してからもう一度押してください'); return; }
+  w.document.write('<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"><title>議事録_' + esc(title) + '_' + esc(date) + '</title><style>' +
+    'body{font-family:"Hiragino Kaku Gothic ProN","Yu Gothic","Meiryo",sans-serif;color:#1a2233;line-height:1.75;padding:28px;font-size:10.5pt;max-width:720px;margin:0 auto;}' +
+    'h1{font-size:15pt;border-bottom:3px solid #2563eb;padding-bottom:8px;margin-bottom:4px;}' +
+    '.meta{color:#556;font-size:9pt;margin-bottom:16px;}' +
+    'h2{font-size:11.5pt;color:#1d4ed8;margin:16px 0 4px;border-left:4px solid #2563eb;padding-left:8px;}' +
+    '.sec{padding-left:4px;}' +
+    '@media print{body{padding:0;}}' +
+    '</style></head><body>' +
+    '<h1>議事録:' + esc(title) + '</h1>' +
+    '<div class="meta">日付:' + esc(date) + ' / 店舗:' + esc(store) + ' / 参加者:' + esc(members) + '</div>' +
+    body + '</body></html>');
+  w.document.close();
+  w.focus();
+  setTimeout(() => w.print(), 500); /* 印刷ダイアログで「PDFに保存」を選択 */
+}
+
 function copyText(text, msg) {
   if (!text) { toast('コピーする内容がありません'); return; }
   navigator.clipboard.writeText(text).then(() => toast(msg)).catch(() => {
